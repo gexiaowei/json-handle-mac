@@ -1,4 +1,4 @@
-import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from "react"
+import { startTransition, useEffect, useMemo, useRef, useState } from "react"
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome"
 import { faCheckCircle, faCircleXmark, faCodeBranch, faCopy } from "@fortawesome/free-solid-svg-icons"
 import { listen } from "@tauri-apps/api/event"
@@ -249,6 +249,7 @@ async function saveFileFromBrowser(contents: string, fallbackName: string) {
 
 function App() {
   const [source, setSource] = useState(sampleJson)
+  const [debouncedSource, setDebouncedSource] = useState(sampleJson)
   const [status, setStatus] = useState("Ready")
   const [activeFile, setActiveFile] = useState<string | null>(null)
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
@@ -266,11 +267,11 @@ function App() {
   } | null>(null)
   const [expandAll, setExpandAll] = useState(false)
   const [treeVersion, setTreeVersion] = useState(0)
-  const deferredSource = useDeferredValue(source)
   const copiedTimer = useRef<number | null>(null)
+  const debounceTimer = useRef<number | null>(null)
   const actionsRef = useRef<Record<string, () => void>>({})
 
-  const parseState = useMemo(() => parseSource(deferredSource), [deferredSource])
+  const parseState = useMemo(() => parseSource(debouncedSource), [debouncedSource])
 
   const treeData = useMemo(() => {
     if (!parseState.valid) {
@@ -296,13 +297,29 @@ function App() {
   }, [])
 
   useEffect(() => {
+    if (debounceTimer.current) {
+      window.clearTimeout(debounceTimer.current)
+    }
+    debounceTimer.current = window.setTimeout(() => {
+      setDebouncedSource(source)
+    }, 300)
+    return () => {
+      if (debounceTimer.current) {
+        window.clearTimeout(debounceTimer.current)
+      }
+    }
+  }, [source])
+
+  useEffect(() => {
     actionsRef.current = {
       file_open: handleOpen,
       file_save: handleSave,
       edit_format: () => applyFormatted(indentSize),
       edit_minify: () => applyFormatted(),
-      edit_validate: () =>
-        setStatus(parseState.valid ? "JSON is valid" : `Invalid JSON: ${parseState.error}`),
+      edit_validate: () => {
+        const result = parseSource(source)
+        setStatus(result.valid ? "JSON is valid" : `Invalid JSON: ${result.error}`)
+      },
       view_expand: handleExpandAll,
       view_collapse: handleCollapseAll,
       app_settings: () => setShowSettings(true),
@@ -403,7 +420,9 @@ function App() {
       const path = selectedPath
       const nextRoot = setJsonAtPath(updated, path, parsedValue)
       startTransition(() => {
-        setSource(JSON.stringify(nextRoot, null, 2))
+        const next = JSON.stringify(nextRoot, null, 2)
+        setSource(next)
+        setDebouncedSource(next)
         setStatus(`Updated ${path}`)
       })
       setGenerated(generateFor(parsedValue, path, genLang))
@@ -427,7 +446,9 @@ function App() {
       const path = selectedPath
       const nextRoot = setJsonAtPath(updated, path, literal)
       startTransition(() => {
-        setSource(JSON.stringify(nextRoot, null, 2))
+        const next = JSON.stringify(nextRoot, null, 2)
+        setSource(next)
+        setDebouncedSource(next)
         setStatus(`Updated ${path}`)
       })
       setGenerated(generateFor(literal as unknown as JsonValue, path, genLang))
@@ -444,7 +465,9 @@ function App() {
     }
 
     startTransition(() => {
-      setSource(JSON.stringify(result.value, null, indentation))
+      const next = JSON.stringify(result.value, null, indentation)
+      setSource(next)
+      setDebouncedSource(next)
       setStatus(indentation === undefined ? "JSON minified" : "JSON formatted")
     })
   }
@@ -469,6 +492,7 @@ function App() {
         const text = await readTextFile(selected)
         startTransition(() => {
           setSource(text)
+          setDebouncedSource(text)
           setActiveFile(selected)
           setStatus(`Opened ${selected}`)
         })
@@ -482,6 +506,7 @@ function App() {
 
       startTransition(() => {
         setSource(browserFile.text)
+        setDebouncedSource(browserFile.text)
         setActiveFile(browserFile.name)
         setStatus(`Opened ${browserFile.name}`)
       })
