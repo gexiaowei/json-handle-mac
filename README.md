@@ -1,5 +1,10 @@
 # JSON Handle (Tauri macOS App)
 
+![JSON Handle Icon](public/app-icon.png)
+
+下载地址（GitHub Release）：  
+[https://github.com/gexiaowei/json-handle-mac/releases/latest](https://github.com/gexiaowei/json-handle-mac/releases/latest)
+
 一个面向 macOS 的 JSON 处理工具，提供结构化 Tree View、节点编辑、类型生成与高亮预览。前端使用 Vite + React，桌面端基于 Tauri。
 
 ## 功能
