@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.pnpm-store/
+.vite/
+*.log
+
+# Tauri / Rust
+src-tauri/target/
+src-tauri/.cargo/
+
+# OS
+.DS_Store
