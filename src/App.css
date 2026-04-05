@@ -190,6 +190,7 @@
 }
 
 .tree-toggle {
+  left: 8px;
   border: 1px solid var(--line);
   border-radius: 2px;
   background: var(--surface);
