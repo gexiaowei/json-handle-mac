@@ -1,7 +1,7 @@
 {
   "name": "json-handle-for-mac",
   "private": true,
-  "version": "0.1.3",
+  "version": "0.1.4",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -65,8 +65,7 @@
     },
     "npm": {
       "publish": false
-    }
-    ,
+    },
     "hooks": {
       "before:init": "pnpm release:sync"
     }
