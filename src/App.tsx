@@ -4,6 +4,7 @@ import {
   faCheckCircle,
   faChevronDown,
   faChevronRight,
+  faCircleXmark,
   faCompress,
   faFloppyDisk,
   faFolderOpen,
@@ -11,6 +12,10 @@ import {
   faPlus,
   faWandMagicSparkles,
 } from '@fortawesome/free-solid-svg-icons'
+import Prism from 'prismjs'
+import 'prismjs/components/prism-typescript'
+import 'prismjs/components/prism-java'
+import 'prismjs/components/prism-kotlin'
 import './App.css'
 
 type JsonValue =
@@ -31,9 +36,11 @@ type TreeNodeProps = {
   path: string
   depth: number
   collapsed: Set<string>
+  selectedPath: string | null
   onToggle: (path: string) => void
   onCopyPath: (path: string) => void
   onSelect: (path: string, value: JsonValue) => void
+  onContextMenu: (event: React.MouseEvent<HTMLButtonElement>, path: string, value: JsonValue) => void
 }
 
 const sampleJson = `{
@@ -80,6 +87,10 @@ function isContainer(value: JsonValue): value is JsonValue[] | Record<string, Js
   return typeof value === 'object' && value !== null
 }
 
+function isJsonObject(value: JsonValue): value is Record<string, JsonValue> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 function summarize(value: JsonValue) {
   if (Array.isArray(value)) {
     return `Array(${value.length})`
@@ -115,18 +126,91 @@ function collectContainerPaths(value: JsonValue, path = '$') {
   return paths
 }
 
+function pathToSegments(path: string) {
+  if (path === '$') {
+    return []
+  }
+  return path
+    .slice(2)
+    .split('.')
+    .flatMap((seg) => {
+      const parts: string[] = []
+      let current = ''
+      for (let i = 0; i < seg.length; i += 1) {
+        const char = seg[i]
+        if (char === '[') {
+          if (current) {
+            parts.push(current)
+            current = ''
+          }
+          const close = seg.indexOf(']', i)
+          parts.push(seg.slice(i + 1, close))
+          i = close
+        } else {
+          current += char
+        }
+      }
+      if (current) {
+        parts.push(current)
+      }
+      return parts.filter(Boolean)
+    })
+    .filter(Boolean)
+}
+
+function setJsonAtPath(root: JsonValue, path: string, nextValue: JsonValue) {
+  if (path === '$') {
+    return nextValue
+  }
+  const updated = root
+  const segments = pathToSegments(path)
+  let cursor: JsonValue = updated
+  for (let i = 0; i < segments.length - 1; i += 1) {
+    const key = segments[i]
+    const index = Number(key)
+    if (Number.isNaN(index)) {
+      if (!isJsonObject(cursor)) {
+        return updated
+      }
+      cursor = cursor[key]
+    } else {
+      if (!Array.isArray(cursor)) {
+        return updated
+      }
+      cursor = cursor[index]
+    }
+  }
+  const last = segments[segments.length - 1]
+  const lastIndex = Number(last)
+  if (Number.isNaN(lastIndex)) {
+    if (!isJsonObject(cursor)) {
+      return updated
+    }
+    cursor[last] = nextValue
+  } else {
+    if (!Array.isArray(cursor)) {
+      return updated
+    }
+    cursor[lastIndex] = nextValue
+  }
+  return updated as JsonValue
+}
+
 function TreeNode({
   label,
   value,
   path,
   depth,
   collapsed,
+  selectedPath,
   onToggle,
   onCopyPath,
   onSelect,
+  onContextMenu,
 }: TreeNodeProps) {
   const container = isContainer(value)
   const isCollapsed = container && collapsed.has(path)
+  const isSelected = selectedPath === path
   const indent = { paddingLeft: `${depth * 18}px` }
 
   return (
@@ -140,9 +224,9 @@ function TreeNode({
           <span className="tree-spacer" />
         )}
         <button
-          className="tree-path"
+          className={`tree-path ${isSelected ? 'selected' : ''}`}
           onClick={() => onSelect(path, value)}
-          onDoubleClick={() => onCopyPath(path)}
+          onContextMenu={(event) => onContextMenu(event, path, value)}
           type="button"
         >
           <span className="tree-label">{label}</span>
@@ -161,9 +245,11 @@ function TreeNode({
                   path={`${path}[${index}]`}
                   depth={depth + 1}
                   collapsed={collapsed}
+                  selectedPath={selectedPath}
                   onToggle={onToggle}
                   onCopyPath={onCopyPath}
                   onSelect={onSelect}
+                  onContextMenu={onContextMenu}
                 />
               ))
             : Object.entries(value).map(([key, child]) => (
@@ -174,9 +260,11 @@ function TreeNode({
                   path={`${path}.${key}`}
                   depth={depth + 1}
                   collapsed={collapsed}
+                  selectedPath={selectedPath}
                   onToggle={onToggle}
                   onCopyPath={onCopyPath}
                   onSelect={onSelect}
+                  onContextMenu={onContextMenu}
                 />
               ))}
         </div>
@@ -218,13 +306,30 @@ function App() {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [status, setStatus] = useState('Ready')
   const [activeFile, setActiveFile] = useState<string | null>(null)
-  const [copiedPath, setCopiedPath] = useState<string | null>(null)
+  const [, setCopiedPath] = useState<string | null>(null)
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
+  const [genLang, setGenLang] = useState<'ts' | 'java' | 'kt'>('ts')
+  const [generated, setGenerated] = useState('')
+  const [showGenerator, setShowGenerator] = useState(false)
+  const [contextMenu, setContextMenu] = useState<{
+    x: number
+    y: number
+    path: string
+    value: JsonValue
+  } | null>(null)
   const deferredSource = useDeferredValue(source)
   const copiedTimer = useRef<number | null>(null)
 
   const parseState = useMemo(() => parseSource(deferredSource), [deferredSource])
+  const highlighted = useMemo(() => {
+    if (!generated) {
+      return ''
+    }
+    const lang =
+      genLang === 'ts' ? 'typescript' : genLang === 'java' ? 'java' : 'kotlin'
+    return Prism.highlight(generated, Prism.languages[lang], lang)
+  }, [generated, genLang])
 
   useEffect(() => {
     return () => {
@@ -282,6 +387,19 @@ function App() {
   const handleSelect = (path: string, value: JsonValue) => {
     setSelectedPath(path)
     setEditValue(typeof value === 'string' ? value : JSON.stringify(value, null, 2))
+    setGenerated(generateFor(value, path, genLang))
+  }
+
+  const handleContextMenu = (
+    event: React.MouseEvent<HTMLButtonElement>,
+    path: string,
+    value: JsonValue
+  ) => {
+    event.preventDefault()
+    setSelectedPath(path)
+    setEditValue(typeof value === 'string' ? value : JSON.stringify(value, null, 2))
+    setGenerated(generateFor(value, path, genLang))
+    setContextMenu({ x: event.clientX, y: event.clientY, path, value })
   }
 
   const handleApplyEdit = () => {
@@ -297,60 +415,12 @@ function App() {
       const updated = JSON.parse(JSON.stringify(parseState.value)) as JsonValue
       const parsedValue = JSON.parse(editValue)
       const path = selectedPath
-      if (path === '$') {
-        startTransition(() => {
-          setSource(JSON.stringify(parsedValue, null, 2))
-          setStatus(`Updated ${path}`)
-        })
-        return
-      }
-      let cursor: any = updated
-      const segments = path
-        .slice(2)
-        .split('.')
-        .flatMap((seg) => {
-          const parts: string[] = []
-          let current = ''
-          for (let i = 0; i < seg.length; i += 1) {
-            const char = seg[i]
-            if (char === '[') {
-              if (current) {
-                parts.push(current)
-                current = ''
-              }
-              const close = seg.indexOf(']', i)
-              parts.push(seg.slice(i, close + 1))
-              i = close
-            } else {
-              current += char
-            }
-          }
-          if (current) {
-            parts.push(current)
-          }
-          return parts.filter(Boolean)
-        })
-        .filter(Boolean)
-      for (let i = 0; i < segments.length - 1; i += 1) {
-        const key = segments[i]
-        if (key.startsWith('[') && key.endsWith(']')) {
-          const index = Number(key.slice(1, -1))
-          cursor = cursor[index]
-        } else {
-          cursor = cursor[key]
-        }
-      }
-      const last = segments[segments.length - 1]
-      if (last.startsWith('[') && last.endsWith(']')) {
-        const index = Number(last.slice(1, -1))
-        cursor[index] = parsedValue
-      } else {
-        cursor[last] = parsedValue
-      }
+      const nextRoot = setJsonAtPath(updated, path, parsedValue)
       startTransition(() => {
-        setSource(JSON.stringify(updated, null, 2))
+        setSource(JSON.stringify(nextRoot, null, 2))
         setStatus(`Updated ${path}`)
       })
+      setGenerated(generateFor(parsedValue, path, genLang))
     } catch (error) {
       setStatus(`Edit failed: ${formatError(error)}`)
     }
@@ -369,61 +439,12 @@ function App() {
     try {
       const updated = JSON.parse(JSON.stringify(parseState.value)) as JsonValue
       const path = selectedPath
-      const parsedValue = literal
-      if (path === '$') {
-        startTransition(() => {
-          setSource(JSON.stringify(parsedValue, null, 2))
-          setStatus(`Updated ${path}`)
-        })
-        return
-      }
-      let cursor: any = updated
-      const segments = path
-        .slice(2)
-        .split('.')
-        .flatMap((seg) => {
-          const parts: string[] = []
-          let current = ''
-          for (let i = 0; i < seg.length; i += 1) {
-            const char = seg[i]
-            if (char === '[') {
-              if (current) {
-                parts.push(current)
-                current = ''
-              }
-              const close = seg.indexOf(']', i)
-              parts.push(seg.slice(i, close + 1))
-              i = close
-            } else {
-              current += char
-            }
-          }
-          if (current) {
-            parts.push(current)
-          }
-          return parts.filter(Boolean)
-        })
-        .filter(Boolean)
-      for (let i = 0; i < segments.length - 1; i += 1) {
-        const key = segments[i]
-        if (key.startsWith('[') && key.endsWith(']')) {
-          const index = Number(key.slice(1, -1))
-          cursor = cursor[index]
-        } else {
-          cursor = cursor[key]
-        }
-      }
-      const last = segments[segments.length - 1]
-      if (last.startsWith('[') && last.endsWith(']')) {
-        const index = Number(last.slice(1, -1))
-        cursor[index] = parsedValue
-      } else {
-        cursor[last] = parsedValue
-      }
+      const nextRoot = setJsonAtPath(updated, path, literal)
       startTransition(() => {
-        setSource(JSON.stringify(updated, null, 2))
+        setSource(JSON.stringify(nextRoot, null, 2))
         setStatus(`Updated ${path}`)
       })
+      setGenerated(generateFor(literal as unknown as JsonValue, path, genLang))
     } catch (error) {
       setStatus(`Edit failed: ${formatError(error)}`)
     }
@@ -538,7 +559,7 @@ function App() {
   }
 
   return (
-    <main className="app-shell">
+    <main className="app-shell" onClick={() => setContextMenu(null)}>
      
 
       <section className="toolbar">
@@ -590,7 +611,8 @@ function App() {
               <p className="panel-kicker">Source</p>
               <h2>Raw editor</h2>
             </div>
-            <span className={`badge ${parseState.valid ? 'ok' : 'error'}`}>
+            <span className={`status-chip ${parseState.valid ? 'ok' : 'error'}`}>
+              <FontAwesomeIcon icon={parseState.valid ? faCheckCircle : faCircleXmark} />
               {parseState.valid ? 'Valid JSON' : 'Parse error'}
             </span>
           </div>
@@ -601,7 +623,6 @@ function App() {
             spellCheck={false}
             value={source}
           />
-          <p className="status-line">{parseState.valid ? status : parseState.error}</p>
         </article>
 
         <article className="panel tree-panel">
@@ -610,9 +631,6 @@ function App() {
               <p className="panel-kicker">Inspect</p>
               <h2>Tree view</h2>
             </div>
-            <span className="panel-note">
-              {copiedPath ? `Copied ${copiedPath}` : 'Click a row to copy its path'}
-            </span>
           </div>
           <div className="tree-scroll">
             {parseState.valid ? (
@@ -622,9 +640,11 @@ function App() {
                 path="$"
                 depth={0}
                 collapsed={collapsed}
+                selectedPath={selectedPath}
                 onToggle={handleToggle}
                 onCopyPath={handleCopyPath}
                 onSelect={handleSelect}
+                onContextMenu={handleContextMenu}
               />
             ) : (
               <div className="empty-state">
@@ -656,15 +676,245 @@ function App() {
           </div>
         </article>
       </section>
-      <section className="hero-panel">
-        <div className="hero-meta">
+      <section className="hero-panel compact">
+        <div className="hero-meta left">
+          <span className="status-line">{parseState.valid ? status : parseState.error}</span>
+        </div>
+        <div className="hero-meta compact">
+          <span className={`status-chip ${parseState.valid ? 'ok' : 'error'}`}>
+            <FontAwesomeIcon icon={parseState.valid ? faCheckCircle : faCircleXmark} />
+            {parseState.valid ? 'Valid' : 'Invalid'}
+          </span>
           <span>{stats.topLevel}</span>
           <span>{stats.bytes} chars</span>
           <span>{activeFile ?? 'Unsaved buffer'}</span>
         </div>
       </section>
+      {showGenerator ? (
+        <div className="modal-backdrop" role="presentation" onClick={() => setShowGenerator(false)}>
+          <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <div>
+                <p className="panel-kicker">Generate</p>
+                <h2>Type structures</h2>
+              </div>
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await navigator.clipboard.writeText(generated || '')
+                  }}
+                >
+                  Copy
+                </button>
+                <button type="button" className="subtle" onClick={() => setShowGenerator(false)}>
+                  Close
+                </button>
+              </div>
+            </div>
+            <div className="segmented">
+              <button
+                type="button"
+                className={genLang === 'ts' ? 'active' : ''}
+                onClick={() => {
+                  setGenLang('ts')
+                  if (selectedPath && parseState.valid) {
+                    setGenerated(generateFor(parseState.value, selectedPath, 'ts'))
+                  }
+                }}
+              >
+                TypeScript
+              </button>
+              <button
+                type="button"
+                className={genLang === 'java' ? 'active' : ''}
+                onClick={() => {
+                  setGenLang('java')
+                  if (selectedPath && parseState.valid) {
+                    setGenerated(generateFor(parseState.value, selectedPath, 'java'))
+                  }
+                }}
+              >
+                Java
+              </button>
+              <button
+                type="button"
+                className={genLang === 'kt' ? 'active' : ''}
+                onClick={() => {
+                  setGenLang('kt')
+                  if (selectedPath && parseState.valid) {
+                    setGenerated(generateFor(parseState.value, selectedPath, 'kt'))
+                  }
+                }}
+              >
+                Kotlin
+              </button>
+            </div>
+            <pre className="generator-output modal-output">
+              <code
+                className={`language-${genLang}`}
+                dangerouslySetInnerHTML={{
+                  __html: highlighted || 'Select a node to generate types.',
+                }}
+              />
+            </pre>
+          </div>
+        </div>
+      ) : null}
+      {contextMenu ? (
+        <div
+          className="context-menu"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          role="menu"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              handleCopyPath(contextMenu.path)
+              setContextMenu(null)
+            }}
+          >
+            Copy path
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              await navigator.clipboard.writeText(
+                typeof contextMenu.value === 'string'
+                  ? contextMenu.value
+                  : JSON.stringify(contextMenu.value, null, 2)
+              )
+              setStatus('Copied value')
+              setContextMenu(null)
+            }}
+          >
+            Copy value
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setShowGenerator(true)
+              setContextMenu(null)
+            }}
+          >
+            Generate code
+          </button>
+        </div>
+      ) : null}
     </main>
   )
 }
 
 export default App
+
+function generateFor(value: JsonValue, path: string, lang: 'ts' | 'java' | 'kt') {
+  const name = nameFromPath(path)
+  if (lang === 'ts') {
+    return generateTypeScript(value, name)
+  }
+  if (lang === 'java') {
+    return generateJava(value, name)
+  }
+  return generateKotlin(value, name)
+}
+
+function nameFromPath(path: string) {
+  if (path === '$') {
+    return 'Root'
+  }
+  const segs = pathToSegments(path)
+  const last = segs[segs.length - 1] || 'Value'
+  return toPascalCase(last.replace(/\d+/g, 'Item'))
+}
+
+function toPascalCase(input: string) {
+  return input
+    .replace(/[^a-zA-Z0-9]+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean)
+    .map((part) => part[0].toUpperCase() + part.slice(1))
+    .join('')
+}
+
+function generateTypeScript(value: JsonValue, rootName: string) {
+  const defs: string[] = []
+  const visited = new Map<JsonValue, string>()
+
+  const typeOf = (val: JsonValue, name: string): string => {
+    if (val === null) return 'null'
+    if (typeof val === 'string') return 'string'
+    if (typeof val === 'number') return 'number'
+    if (typeof val === 'boolean') return 'boolean'
+    if (Array.isArray(val)) {
+      if (val.length === 0) return 'unknown[]'
+      return `${typeOf(val[0], `${name}Item`)}[]`
+    }
+    if (visited.has(val)) return visited.get(val) as string
+    const typeName = toPascalCase(name)
+    visited.set(val, typeName)
+    const lines = Object.entries(val).map(
+      ([key, child]) => `  ${key}: ${typeOf(child, `${typeName}${toPascalCase(key)}`)};`
+    )
+    defs.push(`export interface ${typeName} {\n${lines.join('\n')}\n}`)
+    return typeName
+  }
+
+  typeOf(value, rootName)
+  return defs.join('\n\n')
+}
+
+function generateJava(value: JsonValue, rootName: string) {
+  const defs: string[] = []
+  const visited = new Map<JsonValue, string>()
+
+  const typeOf = (val: JsonValue, name: string): string => {
+    if (val === null) return 'Object'
+    if (typeof val === 'string') return 'String'
+    if (typeof val === 'number') return 'Double'
+    if (typeof val === 'boolean') return 'Boolean'
+    if (Array.isArray(val)) {
+      if (val.length === 0) return 'List<Object>'
+      return `List<${typeOf(val[0], `${name}Item`)}>`
+    }
+    if (visited.has(val)) return visited.get(val) as string
+    const typeName = toPascalCase(name)
+    visited.set(val, typeName)
+    const lines = Object.entries(val).map(
+      ([key, child]) => `    ${typeOf(child, `${typeName}${toPascalCase(key)}`)} ${key}();`
+    )
+    defs.push(`public interface ${typeName} {\n${lines.join('\n')}\n}`)
+    return typeName
+  }
+
+  typeOf(value, rootName)
+  return `import java.util.List;\n\n${defs.join('\n\n')}`
+}
+
+function generateKotlin(value: JsonValue, rootName: string) {
+  const defs: string[] = []
+  const visited = new Map<JsonValue, string>()
+
+  const typeOf = (val: JsonValue, name: string): string => {
+    if (val === null) return 'Any?'
+    if (typeof val === 'string') return 'String'
+    if (typeof val === 'number') return 'Double'
+    if (typeof val === 'boolean') return 'Boolean'
+    if (Array.isArray(val)) {
+      if (val.length === 0) return 'List<Any>'
+      return `List<${typeOf(val[0], `${name}Item`)}>`
+    }
+    if (visited.has(val)) return visited.get(val) as string
+    const typeName = toPascalCase(name)
+    visited.set(val, typeName)
+    const lines = Object.entries(val).map(
+      ([key, child]) => `  val ${key}: ${typeOf(child, `${typeName}${toPascalCase(key)}`)}`
+    )
+    defs.push(`data class ${typeName}(\n${lines.join(',\n')}\n)`)
+    return typeName
+  }
+
+  typeOf(value, rootName)
+  return defs.join('\n\n')
+}
