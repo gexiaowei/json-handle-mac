@@ -1,6 +1,13 @@
 import { startTransition, useEffect, useMemo, useRef, useState } from "react"
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome"
-import { faCheckCircle, faCircleXmark, faCodeBranch, faCopy } from "@fortawesome/free-solid-svg-icons"
+import {
+  faCheckCircle,
+  faCircleXmark,
+  faCodeBranch,
+  faCopy,
+  faCompress,
+  faWandMagicSparkles,
+} from "@fortawesome/free-solid-svg-icons"
 import { listen } from "@tauri-apps/api/event"
 import Prism from "prismjs"
 import "prismjs/components/prism-typescript"
@@ -619,17 +626,16 @@ function App() {
               </CardDescription>
               <CardTitle>Raw editor</CardTitle>
             </div>
-            <Badge
-              className={cn(
-                "gap-2 rounded-full border px-3 py-1 text-xs",
-                parseState.valid
-                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                  : "border-rose-200 bg-rose-50 text-rose-700"
-              )}
-            >
-              <FontAwesomeIcon icon={parseState.valid ? faCheckCircle : faCircleXmark} />
-              {parseState.valid ? "Valid JSON" : "Parse error"}
-            </Badge>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => applyFormatted(indentSize)}>
+                <FontAwesomeIcon icon={faWandMagicSparkles} />
+                Format
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => applyFormatted()}>
+                <FontAwesomeIcon icon={faCompress} />
+                Minify
+              </Button>
+            </div>
           </CardHeader>
           <CardContent className="flex flex-1 flex-col gap-3">
             <Textarea
