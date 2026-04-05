@@ -1,6 +1,6 @@
 .app-shell {
   height: 100vh;
-  padding: 28px;
+  padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -111,7 +111,7 @@
   min-height: 0;
   flex: 1;
   display: grid;
-  grid-template-columns: minmax(320px, 1.05fr) minmax(320px, 0.95fr);
+  grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr);
   gap: 18px;
 }
 
@@ -167,6 +167,7 @@
 .tree-scroll {
   overflow: auto;
   padding: 14px 10px;
+  font: 13px/1.5 var(--mono);
 }
 
 .tree-node {
@@ -177,19 +178,57 @@
 .tree-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 34px;
+  gap: 6px;
+  min-height: 28px;
+  position: relative;
 }
 
-.tree-toggle,
-.tree-spacer {
-  width: 24px;
-  height: 24px;
+.tree-toggle {
+  width: 16px;
+  height: 16px;
   flex: 0 0 auto;
 }
 
-.tree-spacer {
-  display: inline-block;
+.tree-toggle {
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: var(--surface);
+  color: var(--text-strong);
+  font-weight: 600;
+  font-size: 11px;
+  line-height: 1;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  position: relative;
+  z-index: 2;
+  box-shadow: 0 0 0 3px var(--surface);
+}
+
+.tree-toggle:hover {
+  background: var(--panel-muted);
+}
+
+.tree-node {
+  position: relative;
+}
+
+.tree-children {
+  margin-left: 16px;
+  padding-left: 14px;
+  border-left: 1px dotted rgba(0, 0, 0, 0.35);
+}
+
+.tree-row.nested::before {
+  content: '';
+  position: absolute;
+  left: -14px;
+  top: 14px;
+  width: 22px;
+  border-top: 1px dotted rgba(0, 0, 0, 0.35);
 }
 
 .tree-path {
@@ -197,10 +236,10 @@
   min-width: 0;
   display: flex;
   justify-content: space-between;
-  gap: 18px;
+  gap: 12px;
   align-items: center;
-  padding: 8px 12px;
-  border-radius: 8px;
+  padding: 4px 8px;
+  border-radius: 4px;
   border: 1px solid transparent;
   background: transparent;
   color: inherit;
@@ -213,9 +252,9 @@
 }
 
 .tree-path.selected {
-  background: var(--accent-glow);
-  border-color: var(--accent-line);
-  color: var(--text-strong);
+  background: #cfe3ff;
+  border-color: #5b9dff;
+  color: #0b2e4f;
 }
 
 .context-menu {
@@ -435,15 +474,36 @@ button.subtle:hover {
 
 .tree-label {
   color: var(--text-strong);
-  font: 600 13px/1.4 var(--sans);
+  font: 600 12px/1.4 var(--mono);
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .tree-summary {
   color: var(--muted);
-  font: 13px/1.4 var(--mono);
+  font: 12px/1.4 var(--mono);
   white-space: nowrap;
+}
+
+.tree-summary.value-string {
+  color: #f57c2b;
+}
+
+.tree-summary.value-object {
+  color: #2f9e44;
+}
+
+.tree-summary.value-array {
+  color: #1c7ed6;
+}
+
+.tree-summary.value-number {
+  color: #c2255c;
+}
+
+.tree-summary.value-boolean,
+.tree-summary.value-null {
+  color: #495057;
 }
 
 .empty-state {

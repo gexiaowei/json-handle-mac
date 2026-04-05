@@ -1,11 +1,6 @@
 import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import {
-  faCheckCircle,
-  faChevronDown,
-  faChevronRight,
-  faCircleXmark,
-} from '@fortawesome/free-solid-svg-icons'
+import { faCheckCircle, faCircleXmark } from '@fortawesome/free-solid-svg-icons'
 import { listen } from '@tauri-apps/api/event'
 import Prism from 'prismjs'
 import 'prismjs/components/prism-typescript'
@@ -232,31 +227,29 @@ function TreeNode({
   const container = isContainer(value)
   const isCollapsed = container && collapsed.has(path)
   const isSelected = selectedPath === path
-  const indent = { paddingLeft: `${depth * 18}px` }
+  const rowClass = `tree-row ${depth === 0 ? 'root' : 'nested'}`
 
   return (
     <div className="tree-node">
-      <div className="tree-row" style={indent}>
+      <div className={rowClass}>
         {container ? (
-          <button className="icon-btn tree-toggle" onClick={() => onToggle(path)} type="button">
-            <FontAwesomeIcon icon={isCollapsed ? faChevronRight : faChevronDown} />
+          <button className="tree-toggle" onClick={() => onToggle(path)} type="button">
+            {isCollapsed ? '+' : '−'}
           </button>
-        ) : (
-          <span className="tree-spacer" />
-        )}
+        ) : null}
         <button
           className={`tree-path ${isSelected ? 'selected' : ''}`}
           onClick={() => onSelect(path, value)}
           onContextMenu={(event) => onContextMenu(event, path, value)}
           type="button"
         >
-          <span className="tree-label">{label}</span>
-          <span className="tree-summary">{summarize(value)}</span>
+          <span className="tree-label">{depth === 0 ? 'root' : label}</span>
+          <span className={`tree-summary ${typeClass(value)}`}>{summarize(value)}</span>
         </button>
       </div>
 
       {container && !isCollapsed ? (
-        <div>
+        <div className="tree-children">
           {Array.isArray(value)
             ? value.map((item, index) => (
                 <TreeNode
@@ -975,4 +968,14 @@ function generateKotlin(value: JsonValue, rootName: string) {
 
   typeOf(value, rootName)
   return defs.join('\n\n')
+}
+
+function typeClass(value: JsonValue) {
+  if (value === null) return 'value-null'
+  if (Array.isArray(value)) return 'value-array'
+  if (typeof value === 'string') return 'value-string'
+  if (typeof value === 'number') return 'value-number'
+  if (typeof value === 'boolean') return 'value-boolean'
+  if (typeof value === 'object') return 'value-object'
+  return 'value-unknown'
 }
