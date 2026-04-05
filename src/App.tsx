@@ -81,9 +81,6 @@ function parseSource(source: string): ParseState {
   }
 }
 
-function isContainer(value: JsonValue): value is JsonValue[] | Record<string, JsonValue> {
-  return typeof value === "object" && value !== null
-}
 
 function isJsonObject(value: JsonValue): value is Record<string, JsonValue> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -102,23 +99,7 @@ function summarize(value: JsonValue) {
   return JSON.stringify(value)
 }
 
-function collectContainerPaths(value: JsonValue, path = "$") {
-  const paths: string[] = []
-  if (!isContainer(value)) {
-    return paths
-  }
-  paths.push(path)
-  if (Array.isArray(value)) {
-    value.forEach((item, index) => {
-      paths.push(...collectContainerPaths(item, `${path}[${index}]`))
-    })
-  } else {
-    Object.entries(value).forEach(([key, child]) => {
-      paths.push(...collectContainerPaths(child, `${path}.${key}`))
-    })
-  }
-  return paths
-}
+
 
 function pathToSegments(path: string) {
   if (path === "$") {
