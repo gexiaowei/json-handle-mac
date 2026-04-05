@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useMemo, useRef, useState } from "react"
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome"
 import {
   faCheckCircle,
@@ -276,6 +276,9 @@ function App() {
   const [treeVersion, setTreeVersion] = useState(0)
   const copiedTimer = useRef<number | null>(null)
   const debounceTimer = useRef<number | null>(null)
+  const idleHandle = useRef<number | null>(null)
+  const showGeneratorRef = useRef(false)
+  const genLangRef = useRef<"ts" | "java" | "kt">("ts")
   const actionsRef = useRef<Record<string, () => void>>({})
 
   const parseState = useMemo(() => parseSource(debouncedSource), [debouncedSource])
@@ -316,6 +319,34 @@ function App() {
       }
     }
   }, [source])
+
+  useEffect(() => {
+    showGeneratorRef.current = showGenerator
+  }, [showGenerator])
+
+  useEffect(() => {
+    genLangRef.current = genLang
+  }, [genLang])
+
+  const scheduleIdleWork = (work: () => void) => {
+    const w = window as Window &
+      typeof globalThis & {
+        requestIdleCallback?: (cb: () => void) => number
+        cancelIdleCallback?: (id: number) => void
+      }
+    if (idleHandle.current !== null) {
+      if (w.cancelIdleCallback) {
+        w.cancelIdleCallback(idleHandle.current)
+      } else {
+        window.clearTimeout(idleHandle.current)
+      }
+    }
+    if (w.requestIdleCallback) {
+      idleHandle.current = w.requestIdleCallback(work)
+    } else {
+      idleHandle.current = window.setTimeout(work, 0)
+    }
+  }
 
   useEffect(() => {
     actionsRef.current = {
@@ -383,8 +414,14 @@ function App() {
 
   const handleSelect = (path: string, value: JsonValue) => {
     setSelectedPath(path)
-    setEditValue(typeof value === "string" ? value : JSON.stringify(value, null, 2))
-    setGenerated(generateFor(value, path, genLang))
+    scheduleIdleWork(() => {
+      setEditValue(typeof value === "string" ? value : JSON.stringify(value, null, 2))
+      if (showGeneratorRef.current) {
+        setGenerated(generateFor(value, path, genLangRef.current))
+      } else {
+        setGenerated("")
+      }
+    })
   }
 
   const handleContextMenu = (
@@ -394,12 +431,18 @@ function App() {
   ) => {
     event.preventDefault()
     setSelectedPath(path)
-    setEditValue(typeof value === "string" ? value : JSON.stringify(value, null, 2))
-    setGenerated(generateFor(value, path, genLang))
+    scheduleIdleWork(() => {
+      setEditValue(typeof value === "string" ? value : JSON.stringify(value, null, 2))
+      if (showGeneratorRef.current) {
+        setGenerated(generateFor(value, path, genLangRef.current))
+      } else {
+        setGenerated("")
+      }
+    })
     setContextMenu({ x: event.clientX, y: event.clientY, path, value })
   }
 
-  const updateGenerated = (lang: "ts" | "java" | "kt") => {
+  const updateGenerated = useCallback((lang: "ts" | "java" | "kt") => {
     if (!selectedPath || !parseState.valid) {
       setGenerated("")
       return
@@ -410,7 +453,13 @@ function App() {
       return
     }
     setGenerated(generateFor(selectedValue, selectedPath, lang))
-  }
+  }, [parseState.valid, parseState.value, selectedPath])
+
+  useEffect(() => {
+    if (showGenerator && selectedPath) {
+      updateGenerated(genLang)
+    }
+  }, [showGenerator, genLang, selectedPath, updateGenerated])
 
   const handleApplyEdit = () => {
     if (!selectedPath) {
