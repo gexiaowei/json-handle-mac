@@ -1,0 +1,47 @@
+name: Release macOS app
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "pnpm"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build Tauri app (macOS)
+        run: pnpm run tauri:build
+
+      - name: Package .app
+        run: |
+          APP_PATH="src-tauri/target/release/bundle/macos"
+          APP_NAME=$(ls "$APP_PATH" | grep ".app$" | head -n 1)
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH/$APP_NAME" "JSON-Handle-${{ github.ref_name }}.zip"
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: JSON-Handle-${{ github.ref_name }}.zip
