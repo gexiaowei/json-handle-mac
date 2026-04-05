@@ -1,9 +1,10 @@
 .app-shell {
-  min-height: 100vh;
+  height: 100vh;
   padding: 28px;
   display: flex;
   flex-direction: column;
   gap: 18px;
+  overflow: hidden;
 }
 
 .hero-panel,
@@ -105,21 +106,6 @@
   background: var(--danger-bg);
 }
 
-
-.toolbar {
-  display: flex;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 12px;
-  padding: 14px;
-  border-radius: 12px;
-}
-
-.toolbar-group {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
 
 .workspace {
   min-height: 0;
@@ -336,6 +322,26 @@
 .modal-actions {
   display: inline-flex;
   gap: 8px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+
+.settings-title {
+  margin: 0;
+  font-weight: 600;
+}
+
+.settings-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .generator-output {

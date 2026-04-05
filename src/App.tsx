@@ -5,13 +5,8 @@ import {
   faChevronDown,
   faChevronRight,
   faCircleXmark,
-  faCompress,
-  faFloppyDisk,
-  faFolderOpen,
-  faMinus,
-  faPlus,
-  faWandMagicSparkles,
 } from '@fortawesome/free-solid-svg-icons'
+import { listen } from '@tauri-apps/api/event'
 import Prism from 'prismjs'
 import 'prismjs/components/prism-typescript'
 import 'prismjs/components/prism-java'
@@ -196,6 +191,32 @@ function setJsonAtPath(root: JsonValue, path: string, nextValue: JsonValue) {
   return updated as JsonValue
 }
 
+function getJsonAtPath(root: JsonValue, path: string): JsonValue | null {
+  if (path === '$') {
+    return root
+  }
+  const segments = pathToSegments(path)
+  let cursor: JsonValue = root
+  for (const seg of segments) {
+    const index = Number(seg)
+    if (Number.isNaN(index)) {
+      if (!isJsonObject(cursor)) {
+        return null
+      }
+      cursor = cursor[seg]
+    } else {
+      if (!Array.isArray(cursor)) {
+        return null
+      }
+      cursor = cursor[index]
+    }
+    if (cursor === undefined) {
+      return null
+    }
+  }
+  return cursor
+}
+
 function TreeNode({
   label,
   value,
@@ -309,9 +330,11 @@ function App() {
   const [, setCopiedPath] = useState<string | null>(null)
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
+  const [indentSize, setIndentSize] = useState<2 | 4>(2)
   const [genLang, setGenLang] = useState<'ts' | 'java' | 'kt'>('ts')
   const [generated, setGenerated] = useState('')
   const [showGenerator, setShowGenerator] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
   const [contextMenu, setContextMenu] = useState<{
     x: number
     y: number
@@ -320,6 +343,7 @@ function App() {
   } | null>(null)
   const deferredSource = useDeferredValue(source)
   const copiedTimer = useRef<number | null>(null)
+  const actionsRef = useRef<Record<string, () => void>>({})
 
   const parseState = useMemo(() => parseSource(deferredSource), [deferredSource])
   const highlighted = useMemo(() => {
@@ -336,6 +360,36 @@ function App() {
       if (copiedTimer.current) {
         window.clearTimeout(copiedTimer.current)
       }
+    }
+  }, [])
+
+  useEffect(() => {
+    actionsRef.current = {
+      file_open: handleOpen,
+      file_save: handleSave,
+      edit_format: () => applyFormatted(indentSize),
+      edit_minify: () => applyFormatted(),
+      edit_validate: () =>
+        setStatus(parseState.valid ? 'JSON is valid' : `Invalid JSON: ${parseState.error}`),
+      view_expand: handleExpandAll,
+      view_collapse: handleCollapseAll,
+      app_settings: () => setShowSettings(true),
+    }
+  })
+
+  useEffect(() => {
+    if (!('__TAURI_INTERNALS__' in window)) {
+      return
+    }
+    let unlisten: (() => void) | null = null
+    listen<string>('menu-action', (event) => {
+      const action = event.payload
+      actionsRef.current[action]?.()
+    }).then((fn) => {
+      unlisten = fn
+    })
+    return () => {
+      unlisten?.()
     }
   }, [])
 
@@ -400,6 +454,19 @@ function App() {
     setEditValue(typeof value === 'string' ? value : JSON.stringify(value, null, 2))
     setGenerated(generateFor(value, path, genLang))
     setContextMenu({ x: event.clientX, y: event.clientY, path, value })
+  }
+
+  const updateGenerated = (lang: 'ts' | 'java' | 'kt') => {
+    if (!selectedPath || !parseState.valid) {
+      setGenerated('')
+      return
+    }
+    const selectedValue = getJsonAtPath(parseState.value, selectedPath)
+    if (selectedValue === null) {
+      setGenerated('')
+      return
+    }
+    setGenerated(generateFor(selectedValue, selectedPath, lang))
   }
 
   const handleApplyEdit = () => {
@@ -513,7 +580,7 @@ function App() {
       return
     }
 
-    const contents = JSON.stringify(result.value, null, 2)
+    const contents = JSON.stringify(result.value, null, indentSize)
 
     try {
       if ('__TAURI_INTERNALS__' in window) {
@@ -561,48 +628,6 @@ function App() {
   return (
     <main className="app-shell" onClick={() => setContextMenu(null)}>
      
-
-      <section className="toolbar">
-        <div className="toolbar-group">
-          <button onClick={handleOpen} type="button">
-            <FontAwesomeIcon icon={faFolderOpen} />
-            Open
-          </button>
-          <button onClick={handleSave} type="button">
-            <FontAwesomeIcon icon={faFloppyDisk} />
-            Save
-          </button>
-        </div>
-        <div className="toolbar-group">
-          <button onClick={() => applyFormatted(2)} type="button">
-            <FontAwesomeIcon icon={faWandMagicSparkles} />
-            Format
-          </button>
-          <button onClick={() => applyFormatted()} type="button">
-            <FontAwesomeIcon icon={faCompress} />
-            Minify
-          </button>
-          <button
-            onClick={() =>
-              setStatus(parseState.valid ? 'JSON is valid' : `Invalid JSON: ${parseState.error}`)
-            }
-            type="button"
-          >
-            <FontAwesomeIcon icon={faCheckCircle} />
-            Validate
-          </button>
-        </div>
-        <div className="toolbar-group">
-          <button onClick={handleExpandAll} type="button">
-            <FontAwesomeIcon icon={faPlus} />
-            Expand all
-          </button>
-          <button onClick={handleCollapseAll} type="button">
-            <FontAwesomeIcon icon={faMinus} />
-            Collapse all
-          </button>
-        </div>
-      </section>
 
       <section className="workspace">
         <article className="panel editor-panel">
@@ -713,42 +738,36 @@ function App() {
               </div>
             </div>
             <div className="segmented">
-              <button
-                type="button"
-                className={genLang === 'ts' ? 'active' : ''}
-                onClick={() => {
-                  setGenLang('ts')
-                  if (selectedPath && parseState.valid) {
-                    setGenerated(generateFor(parseState.value, selectedPath, 'ts'))
-                  }
-                }}
-              >
-                TypeScript
-              </button>
-              <button
-                type="button"
-                className={genLang === 'java' ? 'active' : ''}
-                onClick={() => {
-                  setGenLang('java')
-                  if (selectedPath && parseState.valid) {
-                    setGenerated(generateFor(parseState.value, selectedPath, 'java'))
-                  }
-                }}
-              >
-                Java
-              </button>
-              <button
-                type="button"
-                className={genLang === 'kt' ? 'active' : ''}
-                onClick={() => {
-                  setGenLang('kt')
-                  if (selectedPath && parseState.valid) {
-                    setGenerated(generateFor(parseState.value, selectedPath, 'kt'))
-                  }
-                }}
-              >
-                Kotlin
-              </button>
+                <button
+                  type="button"
+                  className={genLang === 'ts' ? 'active' : ''}
+                  onClick={() => {
+                    setGenLang('ts')
+                    updateGenerated('ts')
+                  }}
+                >
+                  TypeScript
+                </button>
+                <button
+                  type="button"
+                  className={genLang === 'java' ? 'active' : ''}
+                  onClick={() => {
+                    setGenLang('java')
+                    updateGenerated('java')
+                  }}
+                >
+                  Java
+                </button>
+                <button
+                  type="button"
+                  className={genLang === 'kt' ? 'active' : ''}
+                  onClick={() => {
+                    setGenLang('kt')
+                    updateGenerated('kt')
+                  }}
+                >
+                  Kotlin
+                </button>
             </div>
             <pre className="generator-output modal-output">
               <code
@@ -758,6 +777,45 @@ function App() {
                 }}
               />
             </pre>
+          </div>
+        </div>
+      ) : null}
+      {showSettings ? (
+        <div className="modal-backdrop" role="presentation" onClick={() => setShowSettings(false)}>
+          <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <div>
+                <p className="panel-kicker">Settings</p>
+                <h2>Preferences</h2>
+              </div>
+              <div className="modal-actions">
+                <button type="button" className="subtle" onClick={() => setShowSettings(false)}>
+                  Close
+                </button>
+              </div>
+            </div>
+            <div className="settings-row">
+              <div>
+                <p className="settings-title">Indent size</p>
+                <p className="settings-note">Used for format and save operations.</p>
+              </div>
+              <div className="segmented">
+                <button
+                  type="button"
+                  className={indentSize === 2 ? 'active' : ''}
+                  onClick={() => setIndentSize(2)}
+                >
+                  2 spaces
+                </button>
+                <button
+                  type="button"
+                  className={indentSize === 4 ? 'active' : ''}
+                  onClick={() => setIndentSize(4)}
+                >
+                  4 spaces
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       ) : null}
