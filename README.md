@@ -1,73 +1,67 @@
-# React + TypeScript + Vite
+# JSON Handle (Tauri macOS App)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+一个面向 macOS 的 JSON 处理工具，提供结构化 Tree View、节点编辑、类型生成与高亮预览。前端使用 Vite + React，桌面端基于 Tauri。
 
-Currently, two official plugins are available:
+## 功能
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- JSON 解析与校验（状态栏提示）
+- Tree View 展示层级结构，支持节点选择与高亮
+- 右键菜单：复制路径、复制值、生成类型
+- 节点编辑：支持 JSON 与字符串两种写入方式
+- 生成 TypeScript / Java / Kotlin 类型（带代码高亮）
+- Tauri 菜单：Open / Save / Format / Minify / Validate / Expand / Collapse / Settings
 
-## React Compiler
+## 目录结构
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```
+.
+├── src/                      # 前端源码
+│   ├── components/
+│   │   └── ui/                # shadcn 风格组件与 tree view
+│   ├── lib/
+│   │   └── utils.ts           # shadcn 工具函数
+│   ├── App.tsx                # 主界面与核心逻辑
+│   ├── index.css              # Tailwind 与主题变量
+│   └── main.tsx               # React 入口
+├── src-tauri/                 # Tauri Rust 端
+│   ├── src/
+│   └── tauri.conf.json
+├── public/                    # 静态资源
+├── dist/                      # 前端构建产物
+├── components.json            # shadcn 配置
+├── tailwind.config.cjs        # Tailwind 配置
+└── vite.config.ts             # Vite 配置
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## 开发与构建
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+### 安装依赖
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+pnpm install
 ```
+
+### 前端开发
+
+```bash
+pnpm dev
+```
+
+### 构建前端
+
+```bash
+pnpm build
+```
+
+### 构建 macOS App（Tauri）
+
+```bash
+pnpm run tauri:build
+```
+
+构建产物默认在 `src-tauri/target/release/bundle/macos/`。
+
+## 说明
+
+- Tree View 基于 `mrlightful/shadcn-tree-view` 思路改造
+- 主题色使用 shadcn 默认主色调
