@@ -257,6 +257,7 @@ async function saveFileFromBrowser(contents: string, fallbackName: string) {
 function App() {
   const [source, setSource] = useState(sampleJson)
   const [debouncedSource, setDebouncedSource] = useState(sampleJson)
+  const editorRef = useRef<HTMLTextAreaElement | null>(null)
   const [status, setStatus] = useState("Ready")
   const [activeFile, setActiveFile] = useState<string | null>(null)
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
@@ -514,7 +515,8 @@ function App() {
   }
 
   const applyFormatted = (indentation?: number) => {
-    const result = parseSource(source)
+    const current = editorRef.current?.value ?? source
+    const result = parseSource(current)
     if (!result.valid) {
       setStatus(`Cannot transform invalid JSON: ${result.error}`)
       return
@@ -524,6 +526,9 @@ function App() {
       const next = JSON.stringify(result.value, null, indentation)
       setSource(next)
       setDebouncedSource(next)
+      if (editorRef.current) {
+        editorRef.current.value = next
+      }
       setStatus(indentation === undefined ? "JSON minified" : "JSON formatted")
     })
   }
@@ -549,6 +554,9 @@ function App() {
         startTransition(() => {
           setSource(text)
           setDebouncedSource(text)
+          if (editorRef.current) {
+            editorRef.current.value = text
+          }
           setActiveFile(selected)
           setStatus(`Opened ${selected}`)
         })
@@ -563,6 +571,9 @@ function App() {
       startTransition(() => {
         setSource(browserFile.text)
         setDebouncedSource(browserFile.text)
+        if (editorRef.current) {
+          editorRef.current.value = browserFile.text
+        }
         setActiveFile(browserFile.name)
         setStatus(`Opened ${browserFile.name}`)
       })
@@ -572,7 +583,8 @@ function App() {
   }
 
   const handleSave = async () => {
-    const result = parseSource(source)
+    const current = editorRef.current?.value ?? source
+    const result = parseSource(current)
     if (!result.valid) {
       setStatus(`Cannot save invalid JSON: ${result.error}`)
       return
@@ -690,9 +702,10 @@ function App() {
             <Textarea
               aria-label="JSON source"
               className="min-h-0 flex-1 resize-none font-mono text-sm leading-6"
-              onChange={(event) => setSource(event.target.value)}
+              defaultValue={source}
+              onBlur={(event) => setSource(event.currentTarget.value)}
               spellCheck={false}
-              value={source}
+              ref={editorRef}
             />
           </CardContent>
         </Card>

@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "tauri:build": "tauri build --bundles app",
     "prepare": "husky install",
-    "release": "release-it"
+    "release": "release-it",
+    "release:sync": "node ./scripts/sync-versions.cjs"
   },
   "dependencies": {
     "@fortawesome/fontawesome-svg-core": "^7.2.0",
@@ -64,6 +65,10 @@
     },
     "npm": {
       "publish": false
+    }
+    ,
+    "hooks": {
+      "before:init": "pnpm release:sync"
     }
   }
 }
