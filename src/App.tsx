@@ -1,12 +1,26 @@
-import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faCheckCircle, faCircleXmark } from '@fortawesome/free-solid-svg-icons'
-import { listen } from '@tauri-apps/api/event'
-import Prism from 'prismjs'
-import 'prismjs/components/prism-typescript'
-import 'prismjs/components/prism-java'
-import 'prismjs/components/prism-kotlin'
-import './App.css'
+import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from "react"
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome"
+import { faCheckCircle, faCircleXmark, faCodeBranch, faCopy } from "@fortawesome/free-solid-svg-icons"
+import { listen } from "@tauri-apps/api/event"
+import Prism from "prismjs"
+import "prismjs/components/prism-typescript"
+import "prismjs/components/prism-java"
+import "prismjs/components/prism-kotlin"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Textarea } from "@/components/ui/textarea"
+import { TreeView, type TreeDataItem, type TreeRenderItemParams } from "@/components/ui/tree-view"
+import { cn } from "@/lib/utils"
 
 type JsonValue =
   | string
@@ -20,17 +34,11 @@ type ParseState =
   | { valid: true; value: JsonValue; error: null }
   | { valid: false; value: null; error: string }
 
-type TreeNodeProps = {
-  label: string
-  value: JsonValue
+type JsonTreeItem = TreeDataItem & {
   path: string
-  depth: number
-  collapsed: Set<string>
-  selectedPath: string | null
-  onToggle: (path: string) => void
-  onCopyPath: (path: string) => void
-  onSelect: (path: string, value: JsonValue) => void
-  onContextMenu: (event: React.MouseEvent<HTMLButtonElement>, path: string, value: JsonValue) => void
+  value: JsonValue
+  label: string
+  summary: string
 }
 
 const sampleJson = `{
@@ -50,12 +58,12 @@ const sampleJson = `{
 }`
 
 function formatError(error: unknown) {
-  return error instanceof Error ? error.message : 'Unknown parsing error'
+  return error instanceof Error ? error.message : "Unknown parsing error"
 }
 
 function parseSource(source: string): ParseState {
   if (!source.trim()) {
-    return { valid: false, value: null, error: 'Paste or open a JSON document to begin.' }
+    return { valid: false, value: null, error: "Paste or open a JSON document to begin." }
   }
 
   try {
@@ -74,11 +82,11 @@ function parseSource(source: string): ParseState {
 }
 
 function isContainer(value: JsonValue): value is JsonValue[] | Record<string, JsonValue> {
-  return typeof value === 'object' && value !== null
+  return typeof value === "object" && value !== null
 }
 
 function isJsonObject(value: JsonValue): value is Record<string, JsonValue> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 function summarize(value: JsonValue) {
@@ -86,23 +94,20 @@ function summarize(value: JsonValue) {
     return `Array(${value.length})`
   }
   if (value === null) {
-    return 'null'
+    return "null"
   }
-  if (typeof value === 'object') {
+  if (typeof value === "object") {
     return `Object(${Object.keys(value).length})`
   }
   return JSON.stringify(value)
 }
 
-function collectContainerPaths(value: JsonValue, path = '$') {
+function collectContainerPaths(value: JsonValue, path = "$") {
   const paths: string[] = []
-
   if (!isContainer(value)) {
     return paths
   }
-
   paths.push(path)
-
   if (Array.isArray(value)) {
     value.forEach((item, index) => {
       paths.push(...collectContainerPaths(item, `${path}[${index}]`))
@@ -112,28 +117,27 @@ function collectContainerPaths(value: JsonValue, path = '$') {
       paths.push(...collectContainerPaths(child, `${path}.${key}`))
     })
   }
-
   return paths
 }
 
 function pathToSegments(path: string) {
-  if (path === '$') {
+  if (path === "$") {
     return []
   }
   return path
     .slice(2)
-    .split('.')
+    .split(".")
     .flatMap((seg) => {
       const parts: string[] = []
-      let current = ''
+      let current = ""
       for (let i = 0; i < seg.length; i += 1) {
         const char = seg[i]
-        if (char === '[') {
+        if (char === "[") {
           if (current) {
             parts.push(current)
-            current = ''
+            current = ""
           }
-          const close = seg.indexOf(']', i)
+          const close = seg.indexOf("]", i)
           parts.push(seg.slice(i + 1, close))
           i = close
         } else {
@@ -149,7 +153,7 @@ function pathToSegments(path: string) {
 }
 
 function setJsonAtPath(root: JsonValue, path: string, nextValue: JsonValue) {
-  if (path === '$') {
+  if (path === "$") {
     return nextValue
   }
   const updated = root
@@ -187,7 +191,7 @@ function setJsonAtPath(root: JsonValue, path: string, nextValue: JsonValue) {
 }
 
 function getJsonAtPath(root: JsonValue, path: string): JsonValue | null {
-  if (path === '$') {
+  if (path === "$") {
     return root
   }
   const segments = pathToSegments(path)
@@ -212,93 +216,40 @@ function getJsonAtPath(root: JsonValue, path: string): JsonValue | null {
   return cursor
 }
 
-function TreeNode({
-  label,
-  value,
-  path,
-  depth,
-  collapsed,
-  selectedPath,
-  onToggle,
-  onCopyPath,
-  onSelect,
-  onContextMenu,
-}: TreeNodeProps) {
-  const container = isContainer(value)
-  const isCollapsed = container && collapsed.has(path)
-  const isSelected = selectedPath === path
-  const rowClass = `tree-row ${depth === 0 ? 'root' : 'nested'}`
+function toTreeData(value: JsonValue, path = "$", label = "root"): JsonTreeItem {
+  const item: JsonTreeItem = {
+    id: path,
+    name: label,
+    label,
+    path,
+    value,
+    summary: summarize(value),
+  }
 
-  return (
-    <div className="tree-node">
-      <div className={rowClass}>
-        {container ? (
-          <button className="tree-toggle" onClick={() => onToggle(path)} type="button">
-            {isCollapsed ? '+' : '−'}
-          </button>
-        ) : null}
-        <button
-          className={`tree-path ${isSelected ? 'selected' : ''}`}
-          onClick={() => onSelect(path, value)}
-          onContextMenu={(event) => onContextMenu(event, path, value)}
-          type="button"
-        >
-          <span className="tree-label">{depth === 0 ? 'root' : label}</span>
-          <span className={`tree-summary ${typeClass(value)}`}>{summarize(value)}</span>
-        </button>
-      </div>
+  if (Array.isArray(value)) {
+    item.children = value.map((child, index) =>
+      toTreeData(child, `${path}[${index}]`, `[${index}]`)
+    )
+  } else if (isJsonObject(value)) {
+    item.children = Object.entries(value).map(([key, child]) =>
+      toTreeData(child, `${path}.${key}`, key)
+    )
+  }
 
-      {container && !isCollapsed ? (
-        <div className="tree-children">
-          {Array.isArray(value)
-            ? value.map((item, index) => (
-                <TreeNode
-                  key={`${path}[${index}]`}
-                  label={`[${index}]`}
-                  value={item}
-                  path={`${path}[${index}]`}
-                  depth={depth + 1}
-                  collapsed={collapsed}
-                  selectedPath={selectedPath}
-                  onToggle={onToggle}
-                  onCopyPath={onCopyPath}
-                  onSelect={onSelect}
-                  onContextMenu={onContextMenu}
-                />
-              ))
-            : Object.entries(value).map(([key, child]) => (
-                <TreeNode
-                  key={`${path}.${key}`}
-                  label={key}
-                  value={child}
-                  path={`${path}.${key}`}
-                  depth={depth + 1}
-                  collapsed={collapsed}
-                  selectedPath={selectedPath}
-                  onToggle={onToggle}
-                  onCopyPath={onCopyPath}
-                  onSelect={onSelect}
-                  onContextMenu={onContextMenu}
-                />
-              ))}
-        </div>
-      ) : null}
-    </div>
-  )
+  return item
 }
 
 async function openFileFromBrowser() {
   return new Promise<{ text: string; name: string } | null>((resolve) => {
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.accept = '.json,application/json,.txt'
+    const input = document.createElement("input")
+    input.type = "file"
+    input.accept = ".json,application/json,.txt"
     input.onchange = async () => {
       const file = input.files?.[0]
       if (!file) {
         resolve(null)
         return
       }
-
       resolve({ text: await file.text(), name: file.name })
     }
     input.click()
@@ -306,9 +257,9 @@ async function openFileFromBrowser() {
 }
 
 async function saveFileFromBrowser(contents: string, fallbackName: string) {
-  const blob = new Blob([contents], { type: 'application/json;charset=utf-8' })
+  const blob = new Blob([contents], { type: "application/json;charset=utf-8" })
   const url = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
+  const anchor = document.createElement("a")
   anchor.href = url
   anchor.download = fallbackName
   anchor.click()
@@ -317,15 +268,13 @@ async function saveFileFromBrowser(contents: string, fallbackName: string) {
 
 function App() {
   const [source, setSource] = useState(sampleJson)
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
-  const [status, setStatus] = useState('Ready')
+  const [status, setStatus] = useState("Ready")
   const [activeFile, setActiveFile] = useState<string | null>(null)
-  const [, setCopiedPath] = useState<string | null>(null)
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
-  const [editValue, setEditValue] = useState('')
+  const [editValue, setEditValue] = useState("")
   const [indentSize, setIndentSize] = useState<2 | 4>(2)
-  const [genLang, setGenLang] = useState<'ts' | 'java' | 'kt'>('ts')
-  const [generated, setGenerated] = useState('')
+  const [genLang, setGenLang] = useState<"ts" | "java" | "kt">("ts")
+  const [generated, setGenerated] = useState("")
   const [showGenerator, setShowGenerator] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [contextMenu, setContextMenu] = useState<{
@@ -334,17 +283,26 @@ function App() {
     path: string
     value: JsonValue
   } | null>(null)
+  const [expandAll, setExpandAll] = useState(false)
+  const [treeVersion, setTreeVersion] = useState(0)
   const deferredSource = useDeferredValue(source)
   const copiedTimer = useRef<number | null>(null)
   const actionsRef = useRef<Record<string, () => void>>({})
 
   const parseState = useMemo(() => parseSource(deferredSource), [deferredSource])
+
+  const treeData = useMemo(() => {
+    if (!parseState.valid) {
+      return null
+    }
+    return toTreeData(parseState.value)
+  }, [parseState])
+
   const highlighted = useMemo(() => {
     if (!generated) {
-      return ''
+      return ""
     }
-    const lang =
-      genLang === 'ts' ? 'typescript' : genLang === 'java' ? 'java' : 'kotlin'
+    const lang = genLang === "ts" ? "typescript" : genLang === "java" ? "java" : "kotlin"
     return Prism.highlight(generated, Prism.languages[lang], lang)
   }, [generated, genLang])
 
@@ -363,7 +321,7 @@ function App() {
       edit_format: () => applyFormatted(indentSize),
       edit_minify: () => applyFormatted(),
       edit_validate: () =>
-        setStatus(parseState.valid ? 'JSON is valid' : `Invalid JSON: ${parseState.error}`),
+        setStatus(parseState.valid ? "JSON is valid" : `Invalid JSON: ${parseState.error}`),
       view_expand: handleExpandAll,
       view_collapse: handleCollapseAll,
       app_settings: () => setShowSettings(true),
@@ -371,11 +329,11 @@ function App() {
   })
 
   useEffect(() => {
-    if (!('__TAURI_INTERNALS__' in window)) {
+    if (!("__TAURI_INTERNALS__" in window)) {
       return
     }
     let unlisten: (() => void) | null = null
-    listen<string>('menu-action', (event) => {
+    listen<string>("menu-action", (event) => {
       const action = event.payload
       actionsRef.current[action]?.()
     }).then((fn) => {
@@ -390,7 +348,7 @@ function App() {
     if (!parseState.valid) {
       return {
         bytes: source.length,
-        topLevel: 'invalid',
+        topLevel: "invalid",
       }
     }
 
@@ -398,8 +356,8 @@ function App() {
     const topLevel = Array.isArray(value)
       ? `array · ${value.length} items`
       : value === null
-        ? 'null'
-        : typeof value === 'object'
+        ? "null"
+        : typeof value === "object"
           ? `object · ${Object.keys(value).length} keys`
           : typeof value
 
@@ -409,54 +367,41 @@ function App() {
     }
   }, [parseState, source.length])
 
-  const handleToggle = (path: string) => {
-    setCollapsed((current) => {
-      const next = new Set(current)
-      if (next.has(path)) {
-        next.delete(path)
-      } else {
-        next.add(path)
-      }
-      return next
-    })
-  }
-
   const handleCopyPath = async (path: string) => {
     await navigator.clipboard.writeText(path)
-    setCopiedPath(path)
     setStatus(`Copied path: ${path}`)
     if (copiedTimer.current) {
       window.clearTimeout(copiedTimer.current)
     }
-    copiedTimer.current = window.setTimeout(() => setCopiedPath(null), 1600)
+    copiedTimer.current = window.setTimeout(() => setStatus("Ready"), 1600)
   }
 
   const handleSelect = (path: string, value: JsonValue) => {
     setSelectedPath(path)
-    setEditValue(typeof value === 'string' ? value : JSON.stringify(value, null, 2))
+    setEditValue(typeof value === "string" ? value : JSON.stringify(value, null, 2))
     setGenerated(generateFor(value, path, genLang))
   }
 
   const handleContextMenu = (
-    event: React.MouseEvent<HTMLButtonElement>,
+    event: React.MouseEvent<HTMLDivElement>,
     path: string,
     value: JsonValue
   ) => {
     event.preventDefault()
     setSelectedPath(path)
-    setEditValue(typeof value === 'string' ? value : JSON.stringify(value, null, 2))
+    setEditValue(typeof value === "string" ? value : JSON.stringify(value, null, 2))
     setGenerated(generateFor(value, path, genLang))
     setContextMenu({ x: event.clientX, y: event.clientY, path, value })
   }
 
-  const updateGenerated = (lang: 'ts' | 'java' | 'kt') => {
+  const updateGenerated = (lang: "ts" | "java" | "kt") => {
     if (!selectedPath || !parseState.valid) {
-      setGenerated('')
+      setGenerated("")
       return
     }
     const selectedValue = getJsonAtPath(parseState.value, selectedPath)
     if (selectedValue === null) {
-      setGenerated('')
+      setGenerated("")
       return
     }
     setGenerated(generateFor(selectedValue, selectedPath, lang))
@@ -464,11 +409,11 @@ function App() {
 
   const handleApplyEdit = () => {
     if (!selectedPath) {
-      setStatus('Select a node first')
+      setStatus("Select a node first")
       return
     }
     if (!parseState.valid) {
-      setStatus('Cannot edit while JSON is invalid')
+      setStatus("Cannot edit while JSON is invalid")
       return
     }
     try {
@@ -488,11 +433,11 @@ function App() {
 
   const handleUseLiteral = () => {
     if (!selectedPath) {
-      setStatus('Select a node first')
+      setStatus("Select a node first")
       return
     }
     if (!parseState.valid) {
-      setStatus('Cannot edit while JSON is invalid')
+      setStatus("Cannot edit while JSON is invalid")
       return
     }
     const literal = editValue
@@ -519,21 +464,21 @@ function App() {
 
     startTransition(() => {
       setSource(JSON.stringify(result.value, null, indentation))
-      setStatus(indentation === undefined ? 'JSON minified' : 'JSON formatted')
+      setStatus(indentation === undefined ? "JSON minified" : "JSON formatted")
     })
   }
 
   const handleOpen = async () => {
     try {
-      if ('__TAURI_INTERNALS__' in window) {
+      if ("__TAURI_INTERNALS__" in window) {
         const [{ open }, { readTextFile }] = await Promise.all([
-          import('@tauri-apps/plugin-dialog'),
-          import('@tauri-apps/plugin-fs'),
+          import("@tauri-apps/plugin-dialog"),
+          import("@tauri-apps/plugin-fs"),
         ])
         const selected = await open({
           multiple: false,
           directory: false,
-          filters: [{ name: 'JSON', extensions: ['json', 'txt'] }],
+          filters: [{ name: "JSON", extensions: ["json", "txt"] }],
         })
 
         if (!selected || Array.isArray(selected)) {
@@ -544,7 +489,6 @@ function App() {
         startTransition(() => {
           setSource(text)
           setActiveFile(selected)
-          setCollapsed(new Set())
           setStatus(`Opened ${selected}`)
         })
         return
@@ -558,7 +502,6 @@ function App() {
       startTransition(() => {
         setSource(browserFile.text)
         setActiveFile(browserFile.name)
-        setCollapsed(new Set())
         setStatus(`Opened ${browserFile.name}`)
       })
     } catch (error) {
@@ -576,16 +519,16 @@ function App() {
     const contents = JSON.stringify(result.value, null, indentSize)
 
     try {
-      if ('__TAURI_INTERNALS__' in window) {
+      if ("__TAURI_INTERNALS__" in window) {
         const [{ save }, { writeTextFile }] = await Promise.all([
-          import('@tauri-apps/plugin-dialog'),
-          import('@tauri-apps/plugin-fs'),
+          import("@tauri-apps/plugin-dialog"),
+          import("@tauri-apps/plugin-fs"),
         ])
         const filePath =
           activeFile ??
           (await save({
-            defaultPath: 'data.json',
-            filters: [{ name: 'JSON', extensions: ['json'] }],
+            defaultPath: "data.json",
+            filters: [{ name: "JSON", extensions: ["json"] }],
           }))
 
         if (!filePath || Array.isArray(filePath)) {
@@ -598,259 +541,329 @@ function App() {
         return
       }
 
-      await saveFileFromBrowser(contents, 'data.json')
-      setStatus('Downloaded data.json')
+      await saveFileFromBrowser(contents, "data.json")
+      setStatus("Downloaded data.json")
     } catch (error) {
       setStatus(`Save failed: ${formatError(error)}`)
     }
   }
 
   const handleCollapseAll = () => {
-    if (!parseState.valid) {
-      return
-    }
-    setCollapsed(new Set(collectContainerPaths(parseState.value).filter((path) => path !== '$')))
-    setStatus('Collapsed all nested nodes')
+    setExpandAll(false)
+    setSelectedPath(null)
+    setTreeVersion((prev) => prev + 1)
+    setStatus("Collapsed all nodes")
   }
 
   const handleExpandAll = () => {
-    setCollapsed(new Set())
-    setStatus('Expanded all nodes')
+    setExpandAll(true)
+    setTreeVersion((prev) => prev + 1)
+    setStatus("Expanded all nodes")
+  }
+
+  const renderTreeItem = ({ item, level, isSelected }: TreeRenderItemParams) => {
+    const meta = item as JsonTreeItem
+    const summaryClass = (() => {
+      if (meta.value === null) return "text-slate-500"
+      if (Array.isArray(meta.value)) return "text-blue-600"
+      switch (typeof meta.value) {
+        case "string":
+          return "text-orange-600"
+        case "number":
+          return "text-rose-600"
+        case "boolean":
+          return "text-slate-600"
+        case "object":
+          return "text-emerald-600"
+        default:
+          return "text-muted-foreground"
+      }
+    })()
+    return (
+      <div
+        className={cn(
+          "grid w-full grid-cols-[minmax(120px,1fr)_auto] items-center gap-2 text-left relative rounded-md px-1.5 py-1",
+          isSelected && "bg-accent text-accent-foreground",
+          level > 0 &&
+            "before:absolute before:-left-3 before:top-1/2 before:h-[1px] before:w-3 before:border-t before:border-dashed before:border-border/70"
+        )}
+        onContextMenu={(event) => handleContextMenu(event, meta.path, meta.value)}
+      >
+        <span
+          className={cn(
+            "text-xs font-semibold truncate",
+            isSelected ? "text-foreground" : "text-foreground/90"
+          )}
+        >
+          {meta.label}
+        </span>
+        <span className={cn("text-xs", summaryClass)}>{meta.summary}</span>
+      </div>
+    )
   }
 
   return (
-    <main className="app-shell" onClick={() => setContextMenu(null)}>
-     
-
-      <section className="workspace">
-        <article className="panel editor-panel">
-          <div className="panel-head">
+    <main className="flex h-full flex-col gap-4 p-4" onClick={() => setContextMenu(null)}>
+      <section className="grid flex-1 grid-cols-1 gap-4 lg:grid-cols-2">
+        <Card className="flex min-h-0 flex-col">
+          <CardHeader className="flex-row items-center justify-between gap-3">
             <div>
-              <p className="panel-kicker">Source</p>
-              <h2>Raw editor</h2>
+              <CardDescription className="uppercase tracking-[0.25em] text-[11px]">
+                Source
+              </CardDescription>
+              <CardTitle>Raw editor</CardTitle>
             </div>
-            <span className={`status-chip ${parseState.valid ? 'ok' : 'error'}`}>
+            <Badge
+              className={cn(
+                "gap-2 rounded-full border px-3 py-1 text-xs",
+                parseState.valid
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                  : "border-rose-200 bg-rose-50 text-rose-700"
+              )}
+            >
               <FontAwesomeIcon icon={parseState.valid ? faCheckCircle : faCircleXmark} />
-              {parseState.valid ? 'Valid JSON' : 'Parse error'}
-            </span>
-          </div>
-          <textarea
-            aria-label="JSON source"
-            className="json-input"
-            onChange={(event) => setSource(event.target.value)}
-            spellCheck={false}
-            value={source}
-          />
-        </article>
-
-        <article className="panel tree-panel">
-          <div className="panel-head">
-            <div>
-              <p className="panel-kicker">Inspect</p>
-              <h2>Tree view</h2>
-            </div>
-          </div>
-          <div className="tree-scroll">
-            {parseState.valid ? (
-              <TreeNode
-                label="$"
-                value={parseState.value}
-                path="$"
-                depth={0}
-                collapsed={collapsed}
-                selectedPath={selectedPath}
-                onToggle={handleToggle}
-                onCopyPath={handleCopyPath}
-                onSelect={handleSelect}
-                onContextMenu={handleContextMenu}
-              />
-            ) : (
-              <div className="empty-state">
-                <p>当前内容还不是合法 JSON。</p>
-                <p>修复左侧解析错误后，这里会自动渲染树结构。</p>
-              </div>
-            )}
-          </div>
-          <div className="editor-inline">
-            <div>
-              <p className="panel-kicker">Edit node</p>
-              <p className="editor-path">{selectedPath ?? 'Select a node in tree'}</p>
-            </div>
-            <textarea
-              className="editor-input"
+              {parseState.valid ? "Valid JSON" : "Parse error"}
+            </Badge>
+          </CardHeader>
+          <CardContent className="flex flex-1 flex-col gap-3">
+            <Textarea
+              aria-label="JSON source"
+              className="min-h-0 flex-1 resize-none font-mono text-sm leading-6"
+              onChange={(event) => setSource(event.target.value)}
               spellCheck={false}
-              placeholder='Edit value here. For strings, use quotes: "text".'
-              value={editValue}
-              onChange={(event) => setEditValue(event.target.value)}
+              value={source}
             />
-            <div className="editor-actions">
-              <button type="button" onClick={handleApplyEdit}>
-                Apply (JSON)
-              </button>
-              <button type="button" className="subtle" onClick={handleUseLiteral}>
-                Apply as string
-              </button>
+          </CardContent>
+        </Card>
+
+        <Card className="flex min-h-0 flex-col">
+          <CardHeader className="flex-row items-center justify-between gap-3">
+            <div>
+              <CardDescription className="uppercase tracking-[0.25em] text-[11px]">
+                Inspect
+              </CardDescription>
+              <CardTitle>Tree view</CardTitle>
             </div>
-          </div>
-        </article>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => selectedPath && handleCopyPath(selectedPath)}
+              >
+                <FontAwesomeIcon icon={faCopy} />
+                Copy path
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setShowGenerator(true)}>
+                <FontAwesomeIcon icon={faCodeBranch} />
+                Generate
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="flex flex-1 min-h-0 flex-col gap-3">
+            <div className="flex-[2] min-h-0 overflow-auto rounded-md border border-border bg-background p-2 font-mono text-[12px]">
+              {parseState.valid && treeData ? (
+                <TreeView
+                  key={`tree-${treeVersion}-${expandAll ? "all" : "none"}`}
+                  data={treeData}
+                  expandAll={expandAll}
+                  initialSelectedItemId={selectedPath ?? undefined}
+                  onSelectChange={(item) => {
+                    if (!item) return
+                    const meta = item as JsonTreeItem
+                    handleSelect(meta.path, meta.value)
+                  }}
+                  renderItem={renderTreeItem}
+                />
+              ) : (
+                <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                  当前内容还不是合法 JSON。修复左侧解析错误后，这里会自动渲染树结构。
+                </div>
+              )}
+            </div>
+
+            <div className="flex-[1] min-h-0 rounded-md border border-border bg-muted/40 p-3 flex flex-col">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-xs uppercase tracking-[0.25em] text-muted-foreground">
+                    Edit node
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {selectedPath ?? "Select a node in tree"}
+                  </div>
+                </div>
+              </div>
+              <Textarea
+                className="mt-2 flex-1 min-h-0 font-mono text-xs leading-5"
+                spellCheck={false}
+                placeholder='Edit value here. For strings, use quotes: "text".'
+                value={editValue}
+                onChange={(event) => setEditValue(event.target.value)}
+              />
+              <div className="mt-2 flex items-center gap-2">
+                <Button size="sm" onClick={handleApplyEdit}>
+                  Apply (JSON)
+                </Button>
+                <Button size="sm" variant="outline" onClick={handleUseLiteral}>
+                  Apply as string
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </section>
-      <section className="hero-panel compact">
-        <div className="hero-meta left">
-          <span className="status-line">{parseState.valid ? status : parseState.error}</span>
+
+      <section className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-2">
+        <div className="flex min-w-0 flex-1 items-center gap-2 text-xs text-muted-foreground">
+          <span className="truncate whitespace-nowrap">{parseState.valid ? status : parseState.error}</span>
         </div>
-        <div className="hero-meta compact">
-          <span className={`status-chip ${parseState.valid ? 'ok' : 'error'}`}>
+        <div className="flex flex-wrap items-center justify-end gap-2 text-xs text-muted-foreground">
+          <Badge
+            className={cn(
+              "gap-2 rounded-full border px-3 py-1 text-[11px]",
+              parseState.valid
+                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                : "border-rose-200 bg-rose-50 text-rose-700"
+            )}
+          >
             <FontAwesomeIcon icon={parseState.valid ? faCheckCircle : faCircleXmark} />
-            {parseState.valid ? 'Valid' : 'Invalid'}
-          </span>
+            {parseState.valid ? "Valid" : "Invalid"}
+          </Badge>
           <span>{stats.topLevel}</span>
           <span>{stats.bytes} chars</span>
-          <span>{activeFile ?? 'Unsaved buffer'}</span>
+          <span>{activeFile ?? "Unsaved buffer"}</span>
         </div>
       </section>
-      {showGenerator ? (
-        <div className="modal-backdrop" role="presentation" onClick={() => setShowGenerator(false)}>
-          <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-head">
-              <div>
-                <p className="panel-kicker">Generate</p>
-                <h2>Type structures</h2>
+
+      <Dialog open={showGenerator} onOpenChange={setShowGenerator}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogDescription className="uppercase tracking-[0.25em] text-[11px]">
+              Generate
+            </DialogDescription>
+            <DialogTitle>Type structures</DialogTitle>
+          </DialogHeader>
+          <Tabs
+            value={genLang}
+            onValueChange={(value) => {
+              const next = value as "ts" | "java" | "kt"
+              setGenLang(next)
+              updateGenerated(next)
+            }}
+          >
+            <TabsList>
+              <TabsTrigger value="ts">TypeScript</TabsTrigger>
+              <TabsTrigger value="java">Java</TabsTrigger>
+              <TabsTrigger value="kt">Kotlin</TabsTrigger>
+            </TabsList>
+            <TabsContent value={genLang}>
+              <div className="mt-3 rounded-md border border-border bg-muted/40 p-3">
+                <pre className="prism-output max-h-[50vh] overflow-auto text-xs">
+                  <code
+                    className={`language-${genLang}`}
+                    dangerouslySetInnerHTML={{
+                      __html: highlighted || "Select a node to generate types.",
+                    }}
+                  />
+                </pre>
               </div>
-              <div className="modal-actions">
-                <button
-                  type="button"
-                  onClick={async () => {
-                    await navigator.clipboard.writeText(generated || '')
-                  }}
-                >
-                  Copy
-                </button>
-                <button type="button" className="subtle" onClick={() => setShowGenerator(false)}>
-                  Close
-                </button>
-              </div>
+            </TabsContent>
+          </Tabs>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={async () => {
+                await navigator.clipboard.writeText(generated || "")
+              }}
+            >
+              Copy
+            </Button>
+            <Button onClick={() => setShowGenerator(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showSettings} onOpenChange={setShowSettings}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogDescription className="uppercase tracking-[0.25em] text-[11px]">
+              Settings
+            </DialogDescription>
+            <DialogTitle>Preferences</DialogTitle>
+          </DialogHeader>
+          <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-muted/40 p-3">
+            <div>
+              <div className="text-sm font-semibold">Indent size</div>
+              <div className="text-xs text-muted-foreground">Used for format and save.</div>
             </div>
-            <div className="segmented">
-                <button
-                  type="button"
-                  className={genLang === 'ts' ? 'active' : ''}
-                  onClick={() => {
-                    setGenLang('ts')
-                    updateGenerated('ts')
-                  }}
-                >
-                  TypeScript
-                </button>
-                <button
-                  type="button"
-                  className={genLang === 'java' ? 'active' : ''}
-                  onClick={() => {
-                    setGenLang('java')
-                    updateGenerated('java')
-                  }}
-                >
-                  Java
-                </button>
-                <button
-                  type="button"
-                  className={genLang === 'kt' ? 'active' : ''}
-                  onClick={() => {
-                    setGenLang('kt')
-                    updateGenerated('kt')
-                  }}
-                >
-                  Kotlin
-                </button>
-            </div>
-            <pre className="generator-output modal-output">
-              <code
-                className={`language-${genLang}`}
-                dangerouslySetInnerHTML={{
-                  __html: highlighted || 'Select a node to generate types.',
-                }}
-              />
-            </pre>
-          </div>
-        </div>
-      ) : null}
-      {showSettings ? (
-        <div className="modal-backdrop" role="presentation" onClick={() => setShowSettings(false)}>
-          <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-head">
-              <div>
-                <p className="panel-kicker">Settings</p>
-                <h2>Preferences</h2>
-              </div>
-              <div className="modal-actions">
-                <button type="button" className="subtle" onClick={() => setShowSettings(false)}>
-                  Close
-                </button>
-              </div>
-            </div>
-            <div className="settings-row">
-              <div>
-                <p className="settings-title">Indent size</p>
-                <p className="settings-note">Used for format and save operations.</p>
-              </div>
-              <div className="segmented">
-                <button
-                  type="button"
-                  className={indentSize === 2 ? 'active' : ''}
-                  onClick={() => setIndentSize(2)}
-                >
-                  2 spaces
-                </button>
-                <button
-                  type="button"
-                  className={indentSize === 4 ? 'active' : ''}
-                  onClick={() => setIndentSize(4)}
-                >
-                  4 spaces
-                </button>
-              </div>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant={indentSize === 2 ? "default" : "outline"}
+                onClick={() => setIndentSize(2)}
+              >
+                2 spaces
+              </Button>
+              <Button
+                size="sm"
+                variant={indentSize === 4 ? "default" : "outline"}
+                onClick={() => setIndentSize(4)}
+              >
+                4 spaces
+              </Button>
             </div>
           </div>
-        </div>
-      ) : null}
+          <DialogFooter>
+            <Button onClick={() => setShowSettings(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {contextMenu ? (
         <div
-          className="context-menu"
+          className="fixed z-50 w-44 rounded-md border border-border bg-card p-1 shadow-lg"
           style={{ left: contextMenu.x, top: contextMenu.y }}
           role="menu"
           onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
         >
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="sm"
+            className="w-full justify-start"
             onClick={() => {
               handleCopyPath(contextMenu.path)
               setContextMenu(null)
             }}
           >
             Copy path
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="w-full justify-start"
             onClick={async () => {
               await navigator.clipboard.writeText(
-                typeof contextMenu.value === 'string'
+                typeof contextMenu.value === "string"
                   ? contextMenu.value
                   : JSON.stringify(contextMenu.value, null, 2)
               )
-              setStatus('Copied value')
+              setStatus("Copied value")
               setContextMenu(null)
             }}
           >
             Copy value
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="w-full justify-start"
             onClick={() => {
               setShowGenerator(true)
               setContextMenu(null)
             }}
           >
             Generate code
-          </button>
+          </Button>
         </div>
       ) : null}
     </main>
@@ -859,34 +872,34 @@ function App() {
 
 export default App
 
-function generateFor(value: JsonValue, path: string, lang: 'ts' | 'java' | 'kt') {
+function generateFor(value: JsonValue, path: string, lang: "ts" | "java" | "kt") {
   const name = nameFromPath(path)
-  if (lang === 'ts') {
+  if (lang === "ts") {
     return generateTypeScript(value, name)
   }
-  if (lang === 'java') {
+  if (lang === "java") {
     return generateJava(value, name)
   }
   return generateKotlin(value, name)
 }
 
 function nameFromPath(path: string) {
-  if (path === '$') {
-    return 'Root'
+  if (path === "$") {
+    return "Root"
   }
   const segs = pathToSegments(path)
-  const last = segs[segs.length - 1] || 'Value'
-  return toPascalCase(last.replace(/\d+/g, 'Item'))
+  const last = segs[segs.length - 1] || "Value"
+  return toPascalCase(last.replace(/\d+/g, "Item"))
 }
 
 function toPascalCase(input: string) {
   return input
-    .replace(/[^a-zA-Z0-9]+/g, ' ')
+    .replace(/[^a-zA-Z0-9]+/g, " ")
     .trim()
-    .split(' ')
+    .split(" ")
     .filter(Boolean)
     .map((part) => part[0].toUpperCase() + part.slice(1))
-    .join('')
+    .join("")
 }
 
 function generateTypeScript(value: JsonValue, rootName: string) {
@@ -894,12 +907,12 @@ function generateTypeScript(value: JsonValue, rootName: string) {
   const visited = new Map<JsonValue, string>()
 
   const typeOf = (val: JsonValue, name: string): string => {
-    if (val === null) return 'null'
-    if (typeof val === 'string') return 'string'
-    if (typeof val === 'number') return 'number'
-    if (typeof val === 'boolean') return 'boolean'
+    if (val === null) return "null"
+    if (typeof val === "string") return "string"
+    if (typeof val === "number") return "number"
+    if (typeof val === "boolean") return "boolean"
     if (Array.isArray(val)) {
-      if (val.length === 0) return 'unknown[]'
+      if (val.length === 0) return "unknown[]"
       return `${typeOf(val[0], `${name}Item`)}[]`
     }
     if (visited.has(val)) return visited.get(val) as string
@@ -908,12 +921,12 @@ function generateTypeScript(value: JsonValue, rootName: string) {
     const lines = Object.entries(val).map(
       ([key, child]) => `  ${key}: ${typeOf(child, `${typeName}${toPascalCase(key)}`)};`
     )
-    defs.push(`export interface ${typeName} {\n${lines.join('\n')}\n}`)
+    defs.push(`export interface ${typeName} {\n${lines.join("\n")}\n}`)
     return typeName
   }
 
   typeOf(value, rootName)
-  return defs.join('\n\n')
+  return defs.join("\n\n")
 }
 
 function generateJava(value: JsonValue, rootName: string) {
@@ -921,12 +934,12 @@ function generateJava(value: JsonValue, rootName: string) {
   const visited = new Map<JsonValue, string>()
 
   const typeOf = (val: JsonValue, name: string): string => {
-    if (val === null) return 'Object'
-    if (typeof val === 'string') return 'String'
-    if (typeof val === 'number') return 'Double'
-    if (typeof val === 'boolean') return 'Boolean'
+    if (val === null) return "Object"
+    if (typeof val === "string") return "String"
+    if (typeof val === "number") return "Double"
+    if (typeof val === "boolean") return "Boolean"
     if (Array.isArray(val)) {
-      if (val.length === 0) return 'List<Object>'
+      if (val.length === 0) return "List<Object>"
       return `List<${typeOf(val[0], `${name}Item`)}>`
     }
     if (visited.has(val)) return visited.get(val) as string
@@ -935,12 +948,12 @@ function generateJava(value: JsonValue, rootName: string) {
     const lines = Object.entries(val).map(
       ([key, child]) => `    ${typeOf(child, `${typeName}${toPascalCase(key)}`)} ${key}();`
     )
-    defs.push(`public interface ${typeName} {\n${lines.join('\n')}\n}`)
+    defs.push(`public interface ${typeName} {\n${lines.join("\n")}\n}`)
     return typeName
   }
 
   typeOf(value, rootName)
-  return `import java.util.List;\n\n${defs.join('\n\n')}`
+  return `import java.util.List;\n\n${defs.join("\n\n")}`
 }
 
 function generateKotlin(value: JsonValue, rootName: string) {
@@ -948,12 +961,12 @@ function generateKotlin(value: JsonValue, rootName: string) {
   const visited = new Map<JsonValue, string>()
 
   const typeOf = (val: JsonValue, name: string): string => {
-    if (val === null) return 'Any?'
-    if (typeof val === 'string') return 'String'
-    if (typeof val === 'number') return 'Double'
-    if (typeof val === 'boolean') return 'Boolean'
+    if (val === null) return "Any?"
+    if (typeof val === "string") return "String"
+    if (typeof val === "number") return "Double"
+    if (typeof val === "boolean") return "Boolean"
     if (Array.isArray(val)) {
-      if (val.length === 0) return 'List<Any>'
+      if (val.length === 0) return "List<Any>"
       return `List<${typeOf(val[0], `${name}Item`)}>`
     }
     if (visited.has(val)) return visited.get(val) as string
@@ -962,20 +975,10 @@ function generateKotlin(value: JsonValue, rootName: string) {
     const lines = Object.entries(val).map(
       ([key, child]) => `  val ${key}: ${typeOf(child, `${typeName}${toPascalCase(key)}`)}`
     )
-    defs.push(`data class ${typeName}(\n${lines.join(',\n')}\n)`)
+    defs.push(`data class ${typeName}(\n${lines.join(",\n")}\n)`)
     return typeName
   }
 
   typeOf(value, rootName)
-  return defs.join('\n\n')
-}
-
-function typeClass(value: JsonValue) {
-  if (value === null) return 'value-null'
-  if (Array.isArray(value)) return 'value-array'
-  if (typeof value === 'string') return 'value-string'
-  if (typeof value === 'number') return 'value-number'
-  if (typeof value === 'boolean') return 'value-boolean'
-  if (typeof value === 'object') return 'value-object'
-  return 'value-unknown'
+  return defs.join("\n\n")
 }
