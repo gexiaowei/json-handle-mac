@@ -67,6 +67,7 @@
       "publish": false
     },
     "hooks": {
+      "after:bump": "pnpm release:sync",
       "after:version": "pnpm release:sync"
     }
   }
