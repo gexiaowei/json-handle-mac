@@ -94,3 +94,10 @@
 .prism-output .token.function {
   color: #6d28d9;
 }
+
+
+textarea input {
+  cursor: text !important;
+  user-select: text !important;
+  -webkit-user-drag: none !important;
+}

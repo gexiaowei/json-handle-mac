@@ -67,7 +67,7 @@
       "publish": false
     },
     "hooks": {
-      "before:init": "pnpm release:sync"
+      "after:version": "pnpm release:sync"
     }
   }
 }

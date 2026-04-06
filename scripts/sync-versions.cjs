@@ -16,7 +16,7 @@ if (!version) {
 
 const cargoText = fs.readFileSync(cargoPath, "utf8")
 const nextCargo = cargoText.replace(
-  /^(version\\s*=\\s*")([^"]+)(")/m,
+  /^(version\s*=\s*")([^"]+)(")/m,
   `$1${version}$3`
 )
 fs.writeFileSync(cargoPath, nextCargo)
