@@ -1,6 +1,6 @@
 [package]
 name = "json-handle"
-version = "0.1.6"
+version = "0.1.7"
 description = "A local JSON Handle app built with Tauri"
 authors = ["gexiaowei"]
 edition = "2021"
