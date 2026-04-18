@@ -123,7 +123,7 @@ const TreeView = React.forwardRef<HTMLDivElement, TreeProps>(
     }, [data, expandAll, initialSelectedItemId])
 
     return (
-      <div className={cn("overflow-hidden relative p-2", className)}>
+      <div className={cn("relative h-full min-h-0 p-2", className)}>
         <TreeItem
           data={data}
           ref={ref}

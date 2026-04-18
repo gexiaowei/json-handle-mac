@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
+    "tauri:debug": "RUST_BACKTRACE=1 RUST_LOG=debug tauri dev",
     "tauri:build": "tauri build --bundles app",
     "prepare": "husky install",
     "release": "release-it",

@@ -196,6 +196,53 @@ function setJsonAtPath(root: JsonValue, path: string, nextValue: JsonValue) {
   return updated as JsonValue;
 }
 
+function deleteJsonAtPath(root: JsonValue, path: string) {
+  if (path === "$") {
+    return root;
+  }
+
+  const updated = root;
+  const segments = pathToSegments(path);
+  const parentSegments = segments.slice(0, -1);
+  const last = segments[segments.length - 1];
+  let cursor: JsonValue = updated;
+
+  for (const seg of parentSegments) {
+    const index = Number(seg);
+    if (Number.isNaN(index)) {
+      if (!isJsonObject(cursor)) {
+        return updated;
+      }
+      cursor = cursor[seg];
+    } else {
+      if (!Array.isArray(cursor)) {
+        return updated;
+      }
+      cursor = cursor[index];
+    }
+
+    if (cursor === undefined) {
+      return updated;
+    }
+  }
+
+  const lastIndex = Number(last);
+  if (Number.isNaN(lastIndex)) {
+    if (!isJsonObject(cursor)) {
+      return updated;
+    }
+    delete cursor[last];
+    return updated;
+  }
+
+  if (!Array.isArray(cursor)) {
+    return updated;
+  }
+
+  cursor.splice(lastIndex, 1);
+  return updated;
+}
+
 function getJsonAtPath(root: JsonValue, path: string): JsonValue | null {
   if (path === "$") {
     return root;
@@ -670,6 +717,41 @@ function App() {
     setStatus("Expanded all nodes");
   };
 
+  const handleDeleteNode = (path: string) => {
+    if (!parseState.valid) {
+      setStatus("Cannot delete while JSON is invalid");
+      return;
+    }
+    if (path === "$") {
+      setStatus("Root node cannot be deleted");
+      return;
+    }
+
+    try {
+      const updated = JSON.parse(JSON.stringify(parseState.value)) as JsonValue;
+      const nextRoot = deleteJsonAtPath(updated, path);
+      const next = JSON.stringify(nextRoot, null, 2);
+
+      startTransition(() => {
+        setSource(next);
+        setDebouncedSource(next);
+        if (editorRef.current) {
+          editorRef.current.value = next;
+        }
+        if (selectedPath === path || selectedPath?.startsWith(`${path}.`) || selectedPath?.startsWith(`${path}[`)) {
+          setSelectedPath(null);
+          setEditValue("");
+          setGenerated("");
+        }
+        setStatus(`Deleted ${path}`);
+      });
+    } catch (error) {
+      setStatus(`Delete failed: ${formatError(error)}`);
+    } finally {
+      setContextMenu(null);
+    }
+  };
+
   const renderTreeItem = ({
     item,
     level,
@@ -722,7 +804,7 @@ function App() {
       className="flex h-full flex-col gap-4 p-4"
       onClick={() => setContextMenu(null)}
     >
-      <section className="grid flex-1 grid-cols-1 gap-4 lg:grid-cols-2">
+      <section className="grid flex-1 grid-cols-1 gap-4 lg:grid-cols-2 h-0">
         <Card className="flex min-h-0 flex-col">
           <CardHeader className="flex-row items-center justify-between gap-3">
             <div>
@@ -795,12 +877,13 @@ function App() {
             </div>
           </CardHeader>
           <CardContent className="flex flex-1 min-h-0 flex-col gap-3">
-            <div className="flex-[2] min-h-0 overflow-auto rounded-md border border-border bg-background p-2 font-mono text-[12px]">
+            <div className="flex-[2] min-h-0 overflow-hidden rounded-md border border-border bg-background p-2 font-mono text-[12px]">
               {parseState.valid && treeData ? (
                 <TreeView
                   key={`tree-${treeVersion}-${expandAll ? "all" : "none"}`}
                   data={treeData}
                   expandAll={expandAll}
+                  className="h-full overflow-auto"
                   initialSelectedItemId={selectedPath ?? undefined}
                   onSelectChange={(item) => {
                     if (!item) return;
@@ -1005,6 +1088,14 @@ function App() {
             }}
           >
             Generate code
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="w-full justify-start text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+            onClick={() => handleDeleteNode(contextMenu.path)}
+          >
+            Delete node
           </Button>
         </div>
       ) : null}
