@@ -841,8 +841,8 @@ function App() {
               data-gramm_editor="false"
               aria-label="JSON source"
               className="min-h-0 flex-1 resize-none font-mono text-sm leading-6"
-              defaultValue={source}
-              onBlur={(event) => setSource(event.currentTarget.value)}
+              value={source}
+              onChange={(event) => setSource(event.currentTarget.value)}
               spellCheck={false}
               ref={editorRef}
             />
