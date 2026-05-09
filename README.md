@@ -21,7 +21,8 @@ xattr -dr com.apple.quarantine "/Applications/JSON Handle.app"
 - 节点编辑：支持 JSON 与字符串两种写入方式
 - 生成 TypeScript / Java / Kotlin 类型（带代码高亮）
 - 版本更新检测：对比当前版本与 GitHub 最新 Release，并打开下载页
-- Tauri 菜单：Open / Save / Format / Minify / Validate / Expand / Collapse / Check for Updates / Settings
+- 关于软件信息：显示应用名称、当前版本、作者、版权、应用类型、功能说明与项目入口
+- Tauri 菜单：About JSON Handle / Check for Updates / Open / Save / Format / Minify / Validate / Expand / Collapse / Settings
 
 ## 目录结构
 

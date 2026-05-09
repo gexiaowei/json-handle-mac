@@ -97,10 +97,13 @@ pub fn run() {
 
 fn build_menu(app: &tauri::AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
     let app_sub = Submenu::new(app, "JSON Handle", true)?;
+    let about_item = MenuItem::with_id(app, "app_about", "About JSON Handle", true, None::<&str>)?;
     let check_updates_item =
         MenuItem::with_id(app, "app_check_updates", "Check for Updates...", true, None::<&str>)?;
     let settings_item =
         MenuItem::with_id(app, "app_settings", "Settings...", true, Some("CmdOrCtrl+,"))?;
+    app_sub.append(&about_item)?;
+    app_sub.append(&PredefinedMenuItem::separator(app)?)?;
     app_sub.append(&check_updates_item)?;
     app_sub.append(&PredefinedMenuItem::separator(app)?)?;
     app_sub.append(&settings_item)?;

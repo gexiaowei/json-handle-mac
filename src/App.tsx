@@ -88,7 +88,9 @@ type GitHubRelease = {
 
 const LATEST_RELEASE_API_URL =
   "https://api.github.com/repos/gexiaowei/json-handle-mac/releases/latest";
-const RELEASES_URL = "https://github.com/gexiaowei/json-handle-mac/releases/latest";
+const RELEASES_URL =
+  "https://github.com/gexiaowei/json-handle-mac/releases/latest";
+const PROJECT_URL = "https://github.com/gexiaowei/json-handle-mac";
 
 const sampleJson = `{
   "name": "JSON Handle",
@@ -121,7 +123,9 @@ function compareVersions(left: string, right: string) {
 
   for (let index = 0; index < length; index += 1) {
     const leftPart = Number.isFinite(leftParts[index]) ? leftParts[index] : 0;
-    const rightPart = Number.isFinite(rightParts[index]) ? rightParts[index] : 0;
+    const rightPart = Number.isFinite(rightParts[index])
+      ? rightParts[index]
+      : 0;
 
     if (leftPart !== rightPart) {
       return leftPart > rightPart ? 1 : -1;
@@ -366,10 +370,7 @@ function normalizeSearch(value: string) {
 }
 
 function stringValueMatches(value: JsonValue, query: string) {
-  return (
-    typeof value === "string" &&
-    value.toLocaleLowerCase().includes(query)
-  );
+  return typeof value === "string" && value.toLocaleLowerCase().includes(query);
 }
 
 function countStringSearchMatches(item: JsonTreeItem, query: string) {
@@ -459,13 +460,15 @@ function App() {
   const [generated, setGenerated] = useState("");
   const [showGenerator, setShowGenerator] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showAbout, setShowAbout] = useState(false);
   const [updateCheck, setUpdateCheck] = useState<UpdateCheckState>({
     status: "idle",
     currentVersion: __APP_VERSION__,
     latestVersion: null,
     releaseUrl: RELEASES_URL,
     checkedAt: null,
-    message: "Click Check for Updates to compare with the latest GitHub release.",
+    message:
+      "Click Check for Updates to compare with the latest GitHub release.",
   });
   const [stringSearch, setStringSearch] = useState("");
   const [contextMenu, setContextMenu] = useState<{
@@ -564,7 +567,10 @@ function App() {
         setUpdateCheck((prev) => ({ ...prev, currentVersion: version }));
       })
       .catch(() => {
-        setUpdateCheck((prev) => ({ ...prev, currentVersion: __APP_VERSION__ }));
+        setUpdateCheck((prev) => ({
+          ...prev,
+          currentVersion: __APP_VERSION__,
+        }));
       });
   }, []);
 
@@ -603,6 +609,7 @@ function App() {
       },
       view_expand: handleExpandAll,
       view_collapse: handleCollapseAll,
+      app_about: () => setShowAbout(true),
       app_check_updates: () => {
         setShowSettings(true);
         void handleCheckForUpdates();
@@ -937,7 +944,8 @@ function App() {
       }
 
       const releaseUrl = release.html_url ?? RELEASES_URL;
-      const updateAvailable = compareVersions(latestVersion, currentVersion) > 0;
+      const updateAvailable =
+        compareVersions(latestVersion, currentVersion) > 0;
       const checkedAt = new Date().toLocaleString();
       const published = release.published_at
         ? ` Published ${new Date(release.published_at).toLocaleDateString()}.`
@@ -954,7 +962,11 @@ function App() {
         checkedAt,
         message,
       });
-      setStatus(updateAvailable ? `Update available: ${latestVersion}` : "App is up to date");
+      setStatus(
+        updateAvailable
+          ? `Update available: ${latestVersion}`
+          : "App is up to date",
+      );
     } catch (error) {
       const message = `Update check failed: ${formatError(error)}`;
       setUpdateCheck((prev) => ({
@@ -1001,7 +1013,11 @@ function App() {
         if (editorRef.current) {
           editorRef.current.value = next;
         }
-        if (selectedPath === path || selectedPath?.startsWith(`${path}.`) || selectedPath?.startsWith(`${path}[`)) {
+        if (
+          selectedPath === path ||
+          selectedPath?.startsWith(`${path}.`) ||
+          selectedPath?.startsWith(`${path}[`)
+        ) {
           setSelectedPath(null);
           setEditValue("");
           setGenerated("");
@@ -1046,7 +1062,9 @@ function App() {
         className={cn(
           "grid w-full grid-cols-[minmax(120px,1fr)_auto] items-center gap-2 text-left relative rounded-md px-1.5 py-1",
           isSelected && "bg-accent text-accent-foreground",
-          !isSelected && isStringSearchMatch && "bg-amber-50 ring-1 ring-amber-200",
+          !isSelected &&
+            isStringSearchMatch &&
+            "bg-amber-50 ring-1 ring-amber-200",
           level > 0 &&
             "before:absolute before:-left-3 before:top-1/2 before:h-[1px] before:w-3 before:border-t before:border-dashed before:border-border/70",
         )}
@@ -1313,6 +1331,70 @@ function App() {
               Copy
             </Button>
             <Button onClick={() => setShowGenerator(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showAbout} onOpenChange={setShowAbout}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogDescription className="uppercase tracking-[0.25em] text-[11px]">
+              About
+            </DialogDescription>
+            <DialogTitle>JSON Handle</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="flex items-center gap-3 rounded-md border border-border bg-muted/40 p-3">
+              <img
+                src="/app-icon.png"
+                alt=""
+                className="h-12 w-12 rounded-md"
+                draggable={false}
+              />
+              <div className="min-w-0">
+                <div className="text-sm font-semibold">JSON Handle</div>
+                <div className="text-xs text-muted-foreground">
+                  Version {updateCheck.currentVersion}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  Copyright © {new Date().getFullYear()} chaibai.com.cn
+                </div>
+              </div>
+            </div>
+            <div className="rounded-md border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
+              A local macOS JSON tool for formatting, validation, tree
+              inspection, node editing, and type generation.
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void openExternalUrl(PROJECT_URL)}
+              >
+                <FontAwesomeIcon icon={faArrowUpRightFromSquare} />
+                Project Page
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void openExternalUrl(RELEASES_URL)}
+              >
+                <FontAwesomeIcon icon={faArrowUpRightFromSquare} />
+                Releases
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  setShowAbout(false);
+                  setShowSettings(true);
+                }}
+              >
+                Check Updates
+              </Button>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setShowAbout(false)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
