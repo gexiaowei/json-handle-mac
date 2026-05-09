@@ -1,5 +1,6 @@
 import {
   startTransition,
+  type ReactNode,
   useCallback,
   useEffect,
   useMemo,
@@ -13,6 +14,7 @@ import {
   faCodeBranch,
   faCopy,
   faCompress,
+  faMagnifyingGlass,
   faWandMagicSparkles,
 } from "@fortawesome/free-solid-svg-icons";
 import { listen } from "@tauri-apps/api/event";
@@ -38,6 +40,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   TreeView,
@@ -296,6 +299,63 @@ function toTreeData(
   return item;
 }
 
+function normalizeSearch(value: string) {
+  return value.trim().toLocaleLowerCase();
+}
+
+function stringValueMatches(value: JsonValue, query: string) {
+  return (
+    typeof value === "string" &&
+    value.toLocaleLowerCase().includes(query)
+  );
+}
+
+function countStringSearchMatches(item: JsonTreeItem, query: string) {
+  let count = stringValueMatches(item.value, query) ? 1 : 0;
+
+  for (const child of item.children ?? []) {
+    count += countStringSearchMatches(child as JsonTreeItem, query);
+  }
+
+  return count;
+}
+
+function highlightText(text: string, query: string): ReactNode {
+  if (!query) {
+    return text;
+  }
+
+  const lowerText = text.toLocaleLowerCase();
+  const parts: ReactNode[] = [];
+  let cursor = 0;
+  let matchIndex = lowerText.indexOf(query);
+  let key = 0;
+
+  while (matchIndex !== -1) {
+    if (matchIndex > cursor) {
+      parts.push(text.slice(cursor, matchIndex));
+    }
+    const end = matchIndex + query.length;
+    parts.push(
+      <mark
+        key={`match-${key}`}
+        className="rounded bg-amber-200 px-0.5 text-amber-950"
+      >
+        {text.slice(matchIndex, end)}
+      </mark>,
+    );
+    cursor = end;
+    matchIndex = lowerText.indexOf(query, cursor);
+    key += 1;
+  }
+
+  if (cursor < text.length) {
+    parts.push(text.slice(cursor));
+  }
+
+  return parts;
+}
+
 async function openFileFromBrowser() {
   return new Promise<{ text: string; name: string } | null>((resolve) => {
     const input = document.createElement("input");
@@ -327,6 +387,7 @@ function App() {
   const [source, setSource] = useState(sampleJson);
   const [debouncedSource, setDebouncedSource] = useState(sampleJson);
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
+  const stringSearchRef = useRef<HTMLInputElement | null>(null);
   const [status, setStatus] = useState("Ready");
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -336,6 +397,7 @@ function App() {
   const [generated, setGenerated] = useState("");
   const [showGenerator, setShowGenerator] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [stringSearch, setStringSearch] = useState("");
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -351,6 +413,17 @@ function App() {
   const genLangRef = useRef<"ts" | "java" | "kt">("ts");
   const actionsRef = useRef<Record<string, () => void>>({});
 
+  const focusStringSearch = useCallback(() => {
+    const focus = () => {
+      stringSearchRef.current?.focus();
+      stringSearchRef.current?.select();
+    };
+
+    focus();
+    window.requestAnimationFrame(focus);
+    window.setTimeout(focus, 50);
+  }, []);
+
   const parseState = useMemo(
     () => parseSource(debouncedSource),
     [debouncedSource],
@@ -362,6 +435,19 @@ function App() {
     }
     return toTreeData(parseState.value);
   }, [parseState]);
+
+  const normalizedStringSearch = useMemo(
+    () => normalizeSearch(stringSearch),
+    [stringSearch],
+  );
+
+  const stringSearchMatchCount = useMemo(() => {
+    if (!treeData || !normalizedStringSearch) {
+      return 0;
+    }
+
+    return countStringSearchMatches(treeData, normalizedStringSearch);
+  }, [normalizedStringSearch, treeData]);
 
   const highlighted = useMemo(() => {
     if (!generated) {
@@ -426,6 +512,7 @@ function App() {
     actionsRef.current = {
       file_open: handleOpen,
       file_save: handleSave,
+      edit_search: focusStringSearch,
       edit_format: () => applyFormatted(indentSize),
       edit_minify: () => applyFormatted(),
       edit_validate: () => {
@@ -455,6 +542,40 @@ function App() {
       unlisten?.();
     };
   }, []);
+
+  useEffect(() => {
+    const handleSearchShortcut = (event: KeyboardEvent) => {
+      const isSearchKey =
+        event.code === "KeyF" || event.key.toLowerCase() === "f";
+
+      if (!isSearchKey || (!event.metaKey && !event.ctrlKey)) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      focusStringSearch();
+    };
+
+    const handleNativeSearchShortcut = () => {
+      focusStringSearch();
+    };
+
+    window.addEventListener("keydown", handleSearchShortcut, true);
+    window.addEventListener(
+      "json-handle-focus-string-search",
+      handleNativeSearchShortcut,
+    );
+    document.addEventListener("keydown", handleSearchShortcut, true);
+    return () => {
+      window.removeEventListener("keydown", handleSearchShortcut, true);
+      window.removeEventListener(
+        "json-handle-focus-string-search",
+        handleNativeSearchShortcut,
+      );
+      document.removeEventListener("keydown", handleSearchShortcut, true);
+    };
+  }, [focusStringSearch]);
 
   const stats = useMemo(() => {
     if (!parseState.valid) {
@@ -758,6 +879,10 @@ function App() {
     isSelected,
   }: TreeRenderItemParams) => {
     const meta = item as JsonTreeItem;
+    const isStringSearchMatch = stringValueMatches(
+      meta.value,
+      normalizedStringSearch,
+    );
     const summaryClass = (() => {
       if (meta.value === null) return "text-slate-500";
       if (Array.isArray(meta.value)) return "text-blue-600";
@@ -779,6 +904,7 @@ function App() {
         className={cn(
           "grid w-full grid-cols-[minmax(120px,1fr)_auto] items-center gap-2 text-left relative rounded-md px-1.5 py-1",
           isSelected && "bg-accent text-accent-foreground",
+          !isSelected && isStringSearchMatch && "bg-amber-50 ring-1 ring-amber-200",
           level > 0 &&
             "before:absolute before:-left-3 before:top-1/2 before:h-[1px] before:w-3 before:border-t before:border-dashed before:border-border/70",
         )}
@@ -794,7 +920,19 @@ function App() {
         >
           {meta.label}
         </span>
-        <span className={cn("text-xs", summaryClass)}>{meta.summary}</span>
+        <span
+          className={cn(
+            "min-w-0 text-xs",
+            isStringSearchMatch
+              ? "max-w-[28rem] whitespace-normal break-all"
+              : "truncate",
+            summaryClass,
+          )}
+        >
+          {typeof meta.value === "string"
+            ? highlightText(meta.summary, normalizedStringSearch)
+            : meta.summary}
+        </span>
       </div>
     );
   };
@@ -877,6 +1015,38 @@ function App() {
             </div>
           </CardHeader>
           <CardContent className="flex flex-1 min-h-0 flex-col gap-3">
+            <div className="flex items-center gap-2">
+              <div className="relative min-w-0 flex-1">
+                <FontAwesomeIcon
+                  icon={faMagnifyingGlass}
+                  className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
+                />
+                <Input
+                  ref={stringSearchRef}
+                  value={stringSearch}
+                  onChange={(event) => setStringSearch(event.target.value)}
+                  className="h-8 pl-8 pr-3 font-mono text-xs"
+                  placeholder="搜索字符串值"
+                  aria-label="Search string values"
+                />
+              </div>
+              {normalizedStringSearch ? (
+                <>
+                  <span className="whitespace-nowrap text-xs text-muted-foreground">
+                    {stringSearchMatchCount} matches
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setStringSearch("")}
+                    aria-label="Clear string search"
+                  >
+                    <FontAwesomeIcon icon={faCircleXmark} />
+                    Clear
+                  </Button>
+                </>
+              ) : null}
+            </div>
             <div className="flex-[2] min-h-0 overflow-hidden rounded-md border border-border bg-background p-2 font-mono text-[12px]">
               {parseState.valid && treeData ? (
                 <TreeView

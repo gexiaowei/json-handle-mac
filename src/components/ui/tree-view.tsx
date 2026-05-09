@@ -96,22 +96,37 @@ const TreeView = React.forwardRef<HTMLDivElement, TreeProps>(
     )
 
     const expandedItemIds = React.useMemo(() => {
-      if (!initialSelectedItemId) {
-        return [] as string[]
+      const ids: string[] = []
+
+      function collectTreeItemIds(items: TreeDataItem[] | TreeDataItem) {
+        const treeItems = Array.isArray(items) ? items : [items]
+        for (const item of treeItems) {
+          if (item.children?.length) {
+            ids.push(item.id)
+            collectTreeItemIds(item.children)
+          }
+        }
       }
 
-      const ids: string[] = []
+      if (expandAll) {
+        collectTreeItemIds(data)
+        return ids
+      }
+
+      if (!initialSelectedItemId) {
+        return ids
+      }
 
       function walkTreeItems(items: TreeDataItem[] | TreeDataItem, targetId: string) {
         if (Array.isArray(items)) {
           for (let i = 0; i < items.length; i += 1) {
             ids.push(items[i].id)
-            if (walkTreeItems(items[i], targetId) && !expandAll) {
+            if (walkTreeItems(items[i], targetId)) {
               return true
             }
-            if (!expandAll) ids.pop()
+            ids.pop()
           }
-        } else if (!expandAll && items.id === targetId) {
+        } else if (items.id === targetId) {
           return true
         } else if (items.children) {
           return walkTreeItems(items.children, targetId)
