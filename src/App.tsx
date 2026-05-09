@@ -1,5 +1,6 @@
 import {
   startTransition,
+  type ReactNode,
   useCallback,
   useEffect,
   useMemo,
@@ -13,6 +14,9 @@ import {
   faCodeBranch,
   faCopy,
   faCompress,
+  faMagnifyingGlass,
+  faRotate,
+  faArrowUpRightFromSquare,
   faWandMagicSparkles,
 } from "@fortawesome/free-solid-svg-icons";
 import { listen } from "@tauri-apps/api/event";
@@ -38,6 +42,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   TreeView,
@@ -65,6 +70,28 @@ type JsonTreeItem = TreeDataItem & {
   summary: string;
 };
 
+type UpdateCheckState = {
+  status: "idle" | "checking" | "available" | "current" | "error";
+  currentVersion: string;
+  latestVersion: string | null;
+  releaseUrl: string;
+  checkedAt: string | null;
+  message: string;
+};
+
+type GitHubRelease = {
+  tag_name?: string;
+  html_url?: string;
+  name?: string;
+  published_at?: string;
+};
+
+const LATEST_RELEASE_API_URL =
+  "https://api.github.com/repos/gexiaowei/json-handle-mac/releases/latest";
+const RELEASES_URL =
+  "https://github.com/gexiaowei/json-handle-mac/releases/latest";
+const PROJECT_URL = "https://github.com/gexiaowei/json-handle-mac";
+
 const sampleJson = `{
   "name": "JSON Handle",
   "platform": "macOS",
@@ -83,6 +110,48 @@ const sampleJson = `{
 
 function formatError(error: unknown) {
   return error instanceof Error ? error.message : "Unknown parsing error";
+}
+
+function normalizeVersion(version: string) {
+  return version.trim().replace(/^v/i, "").split(/[+-]/)[0];
+}
+
+function compareVersions(left: string, right: string) {
+  const leftParts = normalizeVersion(left).split(".").map(Number);
+  const rightParts = normalizeVersion(right).split(".").map(Number);
+  const length = Math.max(leftParts.length, rightParts.length);
+
+  for (let index = 0; index < length; index += 1) {
+    const leftPart = Number.isFinite(leftParts[index]) ? leftParts[index] : 0;
+    const rightPart = Number.isFinite(rightParts[index])
+      ? rightParts[index]
+      : 0;
+
+    if (leftPart !== rightPart) {
+      return leftPart > rightPart ? 1 : -1;
+    }
+  }
+
+  return 0;
+}
+
+async function getCurrentAppVersion() {
+  if (!("__TAURI_INTERNALS__" in window)) {
+    return __APP_VERSION__;
+  }
+
+  const { getVersion } = await import("@tauri-apps/api/app");
+  return getVersion();
+}
+
+async function openExternalUrl(url: string) {
+  if ("__TAURI_INTERNALS__" in window) {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("open_external_url", { url });
+    return;
+  }
+
+  window.open(url, "_blank", "noopener,noreferrer");
 }
 
 function parseSource(source: string): ParseState {
@@ -296,6 +365,60 @@ function toTreeData(
   return item;
 }
 
+function normalizeSearch(value: string) {
+  return value.trim().toLocaleLowerCase();
+}
+
+function stringValueMatches(value: JsonValue, query: string) {
+  return typeof value === "string" && value.toLocaleLowerCase().includes(query);
+}
+
+function countStringSearchMatches(item: JsonTreeItem, query: string) {
+  let count = stringValueMatches(item.value, query) ? 1 : 0;
+
+  for (const child of item.children ?? []) {
+    count += countStringSearchMatches(child as JsonTreeItem, query);
+  }
+
+  return count;
+}
+
+function highlightText(text: string, query: string): ReactNode {
+  if (!query) {
+    return text;
+  }
+
+  const lowerText = text.toLocaleLowerCase();
+  const parts: ReactNode[] = [];
+  let cursor = 0;
+  let matchIndex = lowerText.indexOf(query);
+  let key = 0;
+
+  while (matchIndex !== -1) {
+    if (matchIndex > cursor) {
+      parts.push(text.slice(cursor, matchIndex));
+    }
+    const end = matchIndex + query.length;
+    parts.push(
+      <mark
+        key={`match-${key}`}
+        className="rounded bg-amber-200 px-0.5 text-amber-950"
+      >
+        {text.slice(matchIndex, end)}
+      </mark>,
+    );
+    cursor = end;
+    matchIndex = lowerText.indexOf(query, cursor);
+    key += 1;
+  }
+
+  if (cursor < text.length) {
+    parts.push(text.slice(cursor));
+  }
+
+  return parts;
+}
+
 async function openFileFromBrowser() {
   return new Promise<{ text: string; name: string } | null>((resolve) => {
     const input = document.createElement("input");
@@ -327,6 +450,7 @@ function App() {
   const [source, setSource] = useState(sampleJson);
   const [debouncedSource, setDebouncedSource] = useState(sampleJson);
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
+  const stringSearchRef = useRef<HTMLInputElement | null>(null);
   const [status, setStatus] = useState("Ready");
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -336,6 +460,17 @@ function App() {
   const [generated, setGenerated] = useState("");
   const [showGenerator, setShowGenerator] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showAbout, setShowAbout] = useState(false);
+  const [updateCheck, setUpdateCheck] = useState<UpdateCheckState>({
+    status: "idle",
+    currentVersion: __APP_VERSION__,
+    latestVersion: null,
+    releaseUrl: RELEASES_URL,
+    checkedAt: null,
+    message:
+      "Click Check for Updates to compare with the latest GitHub release.",
+  });
+  const [stringSearch, setStringSearch] = useState("");
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -351,6 +486,17 @@ function App() {
   const genLangRef = useRef<"ts" | "java" | "kt">("ts");
   const actionsRef = useRef<Record<string, () => void>>({});
 
+  const focusStringSearch = useCallback(() => {
+    const focus = () => {
+      stringSearchRef.current?.focus();
+      stringSearchRef.current?.select();
+    };
+
+    focus();
+    window.requestAnimationFrame(focus);
+    window.setTimeout(focus, 50);
+  }, []);
+
   const parseState = useMemo(
     () => parseSource(debouncedSource),
     [debouncedSource],
@@ -362,6 +508,19 @@ function App() {
     }
     return toTreeData(parseState.value);
   }, [parseState]);
+
+  const normalizedStringSearch = useMemo(
+    () => normalizeSearch(stringSearch),
+    [stringSearch],
+  );
+
+  const stringSearchMatchCount = useMemo(() => {
+    if (!treeData || !normalizedStringSearch) {
+      return 0;
+    }
+
+    return countStringSearchMatches(treeData, normalizedStringSearch);
+  }, [normalizedStringSearch, treeData]);
 
   const highlighted = useMemo(() => {
     if (!generated) {
@@ -402,6 +561,19 @@ function App() {
     genLangRef.current = genLang;
   }, [genLang]);
 
+  useEffect(() => {
+    getCurrentAppVersion()
+      .then((version) => {
+        setUpdateCheck((prev) => ({ ...prev, currentVersion: version }));
+      })
+      .catch(() => {
+        setUpdateCheck((prev) => ({
+          ...prev,
+          currentVersion: __APP_VERSION__,
+        }));
+      });
+  }, []);
+
   const scheduleIdleWork = (work: () => void) => {
     const w = window as Window &
       typeof globalThis & {
@@ -426,6 +598,7 @@ function App() {
     actionsRef.current = {
       file_open: handleOpen,
       file_save: handleSave,
+      edit_search: focusStringSearch,
       edit_format: () => applyFormatted(indentSize),
       edit_minify: () => applyFormatted(),
       edit_validate: () => {
@@ -436,6 +609,11 @@ function App() {
       },
       view_expand: handleExpandAll,
       view_collapse: handleCollapseAll,
+      app_about: () => setShowAbout(true),
+      app_check_updates: () => {
+        setShowSettings(true);
+        void handleCheckForUpdates();
+      },
       app_settings: () => setShowSettings(true),
     };
   });
@@ -455,6 +633,40 @@ function App() {
       unlisten?.();
     };
   }, []);
+
+  useEffect(() => {
+    const handleSearchShortcut = (event: KeyboardEvent) => {
+      const isSearchKey =
+        event.code === "KeyF" || event.key.toLowerCase() === "f";
+
+      if (!isSearchKey || (!event.metaKey && !event.ctrlKey)) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      focusStringSearch();
+    };
+
+    const handleNativeSearchShortcut = () => {
+      focusStringSearch();
+    };
+
+    window.addEventListener("keydown", handleSearchShortcut, true);
+    window.addEventListener(
+      "json-handle-focus-string-search",
+      handleNativeSearchShortcut,
+    );
+    document.addEventListener("keydown", handleSearchShortcut, true);
+    return () => {
+      window.removeEventListener("keydown", handleSearchShortcut, true);
+      window.removeEventListener(
+        "json-handle-focus-string-search",
+        handleNativeSearchShortcut,
+      );
+      document.removeEventListener("keydown", handleSearchShortcut, true);
+    };
+  }, [focusStringSearch]);
 
   const stats = useMemo(() => {
     if (!parseState.valid) {
@@ -704,6 +916,69 @@ function App() {
     }
   };
 
+  const handleCheckForUpdates = async () => {
+    setUpdateCheck((prev) => ({
+      ...prev,
+      status: "checking",
+      message: "Checking GitHub Releases...",
+    }));
+    setStatus("Checking for updates...");
+
+    try {
+      const currentVersion = await getCurrentAppVersion();
+      const response = await fetch(LATEST_RELEASE_API_URL, {
+        headers: {
+          Accept: "application/vnd.github+json",
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`GitHub returned ${response.status}`);
+      }
+
+      const release = (await response.json()) as GitHubRelease;
+      const latestVersion = release.tag_name ?? release.name;
+
+      if (!latestVersion) {
+        throw new Error("Latest release did not include a version tag");
+      }
+
+      const releaseUrl = release.html_url ?? RELEASES_URL;
+      const updateAvailable =
+        compareVersions(latestVersion, currentVersion) > 0;
+      const checkedAt = new Date().toLocaleString();
+      const published = release.published_at
+        ? ` Published ${new Date(release.published_at).toLocaleDateString()}.`
+        : "";
+      const message = updateAvailable
+        ? `Version ${latestVersion} is available.${published}`
+        : `You are on the latest version (${currentVersion}).${published}`;
+
+      setUpdateCheck({
+        status: updateAvailable ? "available" : "current",
+        currentVersion,
+        latestVersion,
+        releaseUrl,
+        checkedAt,
+        message,
+      });
+      setStatus(
+        updateAvailable
+          ? `Update available: ${latestVersion}`
+          : "App is up to date",
+      );
+    } catch (error) {
+      const message = `Update check failed: ${formatError(error)}`;
+      setUpdateCheck((prev) => ({
+        ...prev,
+        status: "error",
+        checkedAt: new Date().toLocaleString(),
+        message,
+      }));
+      setStatus(message);
+    }
+  };
+
   const handleCollapseAll = () => {
     setExpandAll(false);
     setSelectedPath(null);
@@ -738,7 +1013,11 @@ function App() {
         if (editorRef.current) {
           editorRef.current.value = next;
         }
-        if (selectedPath === path || selectedPath?.startsWith(`${path}.`) || selectedPath?.startsWith(`${path}[`)) {
+        if (
+          selectedPath === path ||
+          selectedPath?.startsWith(`${path}.`) ||
+          selectedPath?.startsWith(`${path}[`)
+        ) {
           setSelectedPath(null);
           setEditValue("");
           setGenerated("");
@@ -758,6 +1037,10 @@ function App() {
     isSelected,
   }: TreeRenderItemParams) => {
     const meta = item as JsonTreeItem;
+    const isStringSearchMatch = stringValueMatches(
+      meta.value,
+      normalizedStringSearch,
+    );
     const summaryClass = (() => {
       if (meta.value === null) return "text-slate-500";
       if (Array.isArray(meta.value)) return "text-blue-600";
@@ -779,6 +1062,9 @@ function App() {
         className={cn(
           "grid w-full grid-cols-[minmax(120px,1fr)_auto] items-center gap-2 text-left relative rounded-md px-1.5 py-1",
           isSelected && "bg-accent text-accent-foreground",
+          !isSelected &&
+            isStringSearchMatch &&
+            "bg-amber-50 ring-1 ring-amber-200",
           level > 0 &&
             "before:absolute before:-left-3 before:top-1/2 before:h-[1px] before:w-3 before:border-t before:border-dashed before:border-border/70",
         )}
@@ -794,7 +1080,19 @@ function App() {
         >
           {meta.label}
         </span>
-        <span className={cn("text-xs", summaryClass)}>{meta.summary}</span>
+        <span
+          className={cn(
+            "min-w-0 text-xs",
+            isStringSearchMatch
+              ? "max-w-[28rem] whitespace-normal break-all"
+              : "truncate",
+            summaryClass,
+          )}
+        >
+          {typeof meta.value === "string"
+            ? highlightText(meta.summary, normalizedStringSearch)
+            : meta.summary}
+        </span>
       </div>
     );
   };
@@ -877,6 +1175,38 @@ function App() {
             </div>
           </CardHeader>
           <CardContent className="flex flex-1 min-h-0 flex-col gap-3">
+            <div className="flex items-center gap-2">
+              <div className="relative min-w-0 flex-1">
+                <FontAwesomeIcon
+                  icon={faMagnifyingGlass}
+                  className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
+                />
+                <Input
+                  ref={stringSearchRef}
+                  value={stringSearch}
+                  onChange={(event) => setStringSearch(event.target.value)}
+                  className="h-8 pl-8 pr-3 font-mono text-xs"
+                  placeholder="搜索字符串值"
+                  aria-label="Search string values"
+                />
+              </div>
+              {normalizedStringSearch ? (
+                <>
+                  <span className="whitespace-nowrap text-xs text-muted-foreground">
+                    {stringSearchMatchCount} matches
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setStringSearch("")}
+                    aria-label="Clear string search"
+                  >
+                    <FontAwesomeIcon icon={faCircleXmark} />
+                    Clear
+                  </Button>
+                </>
+              ) : null}
+            </div>
             <div className="flex-[2] min-h-0 overflow-hidden rounded-md border border-border bg-background p-2 font-mono text-[12px]">
               {parseState.valid && treeData ? (
                 <TreeView
@@ -1005,6 +1335,70 @@ function App() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={showAbout} onOpenChange={setShowAbout}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogDescription className="uppercase tracking-[0.25em] text-[11px]">
+              About
+            </DialogDescription>
+            <DialogTitle>JSON Handle</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="flex items-center gap-3 rounded-md border border-border bg-muted/40 p-3">
+              <img
+                src="/app-icon.png"
+                alt=""
+                className="h-12 w-12 rounded-md"
+                draggable={false}
+              />
+              <div className="min-w-0">
+                <div className="text-sm font-semibold">JSON Handle</div>
+                <div className="text-xs text-muted-foreground">
+                  Version {updateCheck.currentVersion}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  Copyright © {new Date().getFullYear()} chaibai.com.cn
+                </div>
+              </div>
+            </div>
+            <div className="rounded-md border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
+              A local macOS JSON tool for formatting, validation, tree
+              inspection, node editing, and type generation.
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void openExternalUrl(PROJECT_URL)}
+              >
+                <FontAwesomeIcon icon={faArrowUpRightFromSquare} />
+                Project Page
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void openExternalUrl(RELEASES_URL)}
+              >
+                <FontAwesomeIcon icon={faArrowUpRightFromSquare} />
+                Releases
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  setShowAbout(false);
+                  setShowSettings(true);
+                }}
+              >
+                Check Updates
+              </Button>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setShowAbout(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={showSettings} onOpenChange={setShowSettings}>
         <DialogContent>
           <DialogHeader>
@@ -1034,6 +1428,69 @@ function App() {
                 onClick={() => setIndentSize(4)}
               >
                 4 spaces
+              </Button>
+            </div>
+          </div>
+          <div className="rounded-md border border-border bg-muted/40 p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold">Version updates</div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  Current version {updateCheck.currentVersion}
+                  {updateCheck.latestVersion
+                    ? ` · Latest ${updateCheck.latestVersion}`
+                    : ""}
+                </div>
+              </div>
+              <Badge
+                className={cn(
+                  "shrink-0 rounded-full border px-3 py-1 text-[11px]",
+                  updateCheck.status === "available" &&
+                    "border-blue-200 bg-blue-50 text-blue-700",
+                  updateCheck.status === "current" &&
+                    "border-emerald-200 bg-emerald-50 text-emerald-700",
+                  updateCheck.status === "error" &&
+                    "border-rose-200 bg-rose-50 text-rose-700",
+                  (updateCheck.status === "idle" ||
+                    updateCheck.status === "checking") &&
+                    "border-slate-200 bg-slate-50 text-slate-700",
+                )}
+              >
+                {updateCheck.status === "checking"
+                  ? "Checking"
+                  : updateCheck.status === "available"
+                    ? "Update available"
+                    : updateCheck.status === "current"
+                      ? "Up to date"
+                      : updateCheck.status === "error"
+                        ? "Failed"
+                        : "Not checked"}
+              </Badge>
+            </div>
+            <div className="mt-2 text-xs text-muted-foreground">
+              {updateCheck.message}
+            </div>
+            {updateCheck.checkedAt ? (
+              <div className="mt-1 text-[11px] text-muted-foreground">
+                Checked at {updateCheck.checkedAt}
+              </div>
+            ) : null}
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                onClick={() => void handleCheckForUpdates()}
+                disabled={updateCheck.status === "checking"}
+              >
+                <FontAwesomeIcon icon={faRotate} />
+                Check for Updates
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void openExternalUrl(updateCheck.releaseUrl)}
+              >
+                <FontAwesomeIcon icon={faArrowUpRightFromSquare} />
+                Open Download Page
               </Button>
             </div>
           </div>
