@@ -70,6 +70,25 @@ type JsonTreeItem = TreeDataItem & {
   summary: string;
 };
 
+type SearchOptions = {
+  caseSensitive: boolean;
+  regex: boolean;
+};
+
+type SearchMatcher =
+  | {
+      active: false;
+      error: null;
+      matches: (text: string) => false;
+      ranges: (text: string) => [];
+    }
+  | {
+      active: true;
+      error: string | null;
+      matches: (text: string) => boolean;
+      ranges: (text: string) => Array<[number, number]>;
+    };
+
 type UpdateCheckState = {
   status: "idle" | "checking" | "available" | "current" | "error";
   currentVersion: string;
@@ -365,50 +384,120 @@ function toTreeData(
   return item;
 }
 
-function normalizeSearch(value: string) {
-  return value.trim().toLocaleLowerCase();
+function createSearchMatcher(query: string, options: SearchOptions): SearchMatcher {
+  const pattern = query.trim();
+  if (!pattern) {
+    return {
+      active: false,
+      error: null,
+      matches: () => false,
+      ranges: () => [],
+    };
+  }
+
+  if (options.regex) {
+    let expression: RegExp;
+    try {
+      expression = new RegExp(pattern, options.caseSensitive ? "g" : "gi");
+    } catch (error) {
+      return {
+        active: true,
+        error: formatError(error),
+        matches: () => false,
+        ranges: () => [],
+      };
+    }
+
+    return {
+      active: true,
+      error: null,
+      matches: (text) => {
+        expression.lastIndex = 0;
+        return expression.test(text);
+      },
+      ranges: (text) => {
+        const ranges: Array<[number, number]> = [];
+        expression.lastIndex = 0;
+
+        for (let match = expression.exec(text); match; match = expression.exec(text)) {
+          const start = match.index;
+          const end = start + match[0].length;
+          if (end === start) {
+            expression.lastIndex += 1;
+            continue;
+          }
+          ranges.push([start, end]);
+        }
+
+        return ranges;
+      },
+    };
+  }
+
+  const needle = options.caseSensitive ? pattern : pattern.toLocaleLowerCase();
+
+  return {
+    active: true,
+    error: null,
+    matches: (text) => {
+      const haystack = options.caseSensitive ? text : text.toLocaleLowerCase();
+      return haystack.includes(needle);
+    },
+    ranges: (text) => {
+      const haystack = options.caseSensitive ? text : text.toLocaleLowerCase();
+      const ranges: Array<[number, number]> = [];
+      let cursor = 0;
+      let index = haystack.indexOf(needle, cursor);
+
+      while (index !== -1) {
+        const end = index + needle.length;
+        ranges.push([index, end]);
+        cursor = end;
+        index = haystack.indexOf(needle, cursor);
+      }
+
+      return ranges;
+    },
+  };
 }
 
-function stringValueMatches(value: JsonValue, query: string) {
-  return typeof value === "string" && value.toLocaleLowerCase().includes(query);
+function stringValueMatches(value: JsonValue, matcher: SearchMatcher) {
+  return typeof value === "string" && matcher.matches(value);
 }
 
-function countStringSearchMatches(item: JsonTreeItem, query: string) {
-  let count = stringValueMatches(item.value, query) ? 1 : 0;
+function countStringSearchMatches(item: JsonTreeItem, matcher: SearchMatcher) {
+  let count = stringValueMatches(item.value, matcher) ? 1 : 0;
 
   for (const child of item.children ?? []) {
-    count += countStringSearchMatches(child as JsonTreeItem, query);
+    count += countStringSearchMatches(child as JsonTreeItem, matcher);
   }
 
   return count;
 }
 
-function highlightText(text: string, query: string): ReactNode {
-  if (!query) {
+function highlightText(text: string, matcher: SearchMatcher): ReactNode {
+  const ranges = matcher.ranges(text);
+  if (!ranges.length) {
     return text;
   }
 
-  const lowerText = text.toLocaleLowerCase();
   const parts: ReactNode[] = [];
   let cursor = 0;
-  let matchIndex = lowerText.indexOf(query);
   let key = 0;
 
-  while (matchIndex !== -1) {
-    if (matchIndex > cursor) {
-      parts.push(text.slice(cursor, matchIndex));
+  for (const [start, end] of ranges) {
+    if (start > cursor) {
+      parts.push(text.slice(cursor, start));
     }
-    const end = matchIndex + query.length;
     parts.push(
       <mark
         key={`match-${key}`}
         className="rounded bg-amber-200 px-0.5 text-amber-950"
       >
-        {text.slice(matchIndex, end)}
+        {text.slice(start, end)}
       </mark>,
     );
     cursor = end;
-    matchIndex = lowerText.indexOf(query, cursor);
     key += 1;
   }
 
@@ -471,6 +560,9 @@ function App() {
       "Click Check for Updates to compare with the latest GitHub release.",
   });
   const [stringSearch, setStringSearch] = useState("");
+  const [stringSearchRegex, setStringSearchRegex] = useState(false);
+  const [stringSearchCaseSensitive, setStringSearchCaseSensitive] =
+    useState(false);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -509,18 +601,22 @@ function App() {
     return toTreeData(parseState.value);
   }, [parseState]);
 
-  const normalizedStringSearch = useMemo(
-    () => normalizeSearch(stringSearch),
-    [stringSearch],
+  const stringSearchMatcher = useMemo(
+    () =>
+      createSearchMatcher(stringSearch, {
+        caseSensitive: stringSearchCaseSensitive,
+        regex: stringSearchRegex,
+      }),
+    [stringSearch, stringSearchCaseSensitive, stringSearchRegex],
   );
 
   const stringSearchMatchCount = useMemo(() => {
-    if (!treeData || !normalizedStringSearch) {
+    if (!treeData || !stringSearchMatcher.active || stringSearchMatcher.error) {
       return 0;
     }
 
-    return countStringSearchMatches(treeData, normalizedStringSearch);
-  }, [normalizedStringSearch, treeData]);
+    return countStringSearchMatches(treeData, stringSearchMatcher);
+  }, [stringSearchMatcher, treeData]);
 
   const highlighted = useMemo(() => {
     if (!generated) {
@@ -1039,7 +1135,7 @@ function App() {
     const meta = item as JsonTreeItem;
     const isStringSearchMatch = stringValueMatches(
       meta.value,
-      normalizedStringSearch,
+      stringSearchMatcher,
     );
     const summaryClass = (() => {
       if (meta.value === null) return "text-slate-500";
@@ -1090,7 +1186,7 @@ function App() {
           )}
         >
           {typeof meta.value === "string"
-            ? highlightText(meta.summary, normalizedStringSearch)
+            ? highlightText(meta.summary, stringSearchMatcher)
             : meta.summary}
         </span>
       </div>
@@ -1175,7 +1271,7 @@ function App() {
             </div>
           </CardHeader>
           <CardContent className="flex flex-1 min-h-0 flex-col gap-3">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <div className="relative min-w-0 flex-1">
                 <FontAwesomeIcon
                   icon={faMagnifyingGlass}
@@ -1190,10 +1286,34 @@ function App() {
                   aria-label="Search string values"
                 />
               </div>
-              {normalizedStringSearch ? (
+              <Button
+                type="button"
+                variant={stringSearchRegex ? "default" : "outline"}
+                size="sm"
+                onClick={() => setStringSearchRegex((prev) => !prev)}
+                aria-pressed={stringSearchRegex}
+                title="Use regular expression"
+              >
+                .*
+              </Button>
+              <Button
+                type="button"
+                variant={stringSearchCaseSensitive ? "default" : "outline"}
+                size="sm"
+                onClick={() =>
+                  setStringSearchCaseSensitive((prev) => !prev)
+                }
+                aria-pressed={stringSearchCaseSensitive}
+                title="Match case"
+              >
+                Aa
+              </Button>
+              {stringSearchMatcher.active ? (
                 <>
                   <span className="whitespace-nowrap text-xs text-muted-foreground">
-                    {stringSearchMatchCount} matches
+                    {stringSearchMatcher.error
+                      ? "Invalid regex"
+                      : `${stringSearchMatchCount} matches`}
                   </span>
                   <Button
                     variant="outline"
