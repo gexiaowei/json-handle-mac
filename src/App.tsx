@@ -15,6 +15,8 @@ import {
   faCopy,
   faCompress,
   faMagnifyingGlass,
+  faRotate,
+  faArrowUpRightFromSquare,
   faWandMagicSparkles,
 } from "@fortawesome/free-solid-svg-icons";
 import { listen } from "@tauri-apps/api/event";
@@ -68,6 +70,26 @@ type JsonTreeItem = TreeDataItem & {
   summary: string;
 };
 
+type UpdateCheckState = {
+  status: "idle" | "checking" | "available" | "current" | "error";
+  currentVersion: string;
+  latestVersion: string | null;
+  releaseUrl: string;
+  checkedAt: string | null;
+  message: string;
+};
+
+type GitHubRelease = {
+  tag_name?: string;
+  html_url?: string;
+  name?: string;
+  published_at?: string;
+};
+
+const LATEST_RELEASE_API_URL =
+  "https://api.github.com/repos/gexiaowei/json-handle-mac/releases/latest";
+const RELEASES_URL = "https://github.com/gexiaowei/json-handle-mac/releases/latest";
+
 const sampleJson = `{
   "name": "JSON Handle",
   "platform": "macOS",
@@ -86,6 +108,46 @@ const sampleJson = `{
 
 function formatError(error: unknown) {
   return error instanceof Error ? error.message : "Unknown parsing error";
+}
+
+function normalizeVersion(version: string) {
+  return version.trim().replace(/^v/i, "").split(/[+-]/)[0];
+}
+
+function compareVersions(left: string, right: string) {
+  const leftParts = normalizeVersion(left).split(".").map(Number);
+  const rightParts = normalizeVersion(right).split(".").map(Number);
+  const length = Math.max(leftParts.length, rightParts.length);
+
+  for (let index = 0; index < length; index += 1) {
+    const leftPart = Number.isFinite(leftParts[index]) ? leftParts[index] : 0;
+    const rightPart = Number.isFinite(rightParts[index]) ? rightParts[index] : 0;
+
+    if (leftPart !== rightPart) {
+      return leftPart > rightPart ? 1 : -1;
+    }
+  }
+
+  return 0;
+}
+
+async function getCurrentAppVersion() {
+  if (!("__TAURI_INTERNALS__" in window)) {
+    return __APP_VERSION__;
+  }
+
+  const { getVersion } = await import("@tauri-apps/api/app");
+  return getVersion();
+}
+
+async function openExternalUrl(url: string) {
+  if ("__TAURI_INTERNALS__" in window) {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("open_external_url", { url });
+    return;
+  }
+
+  window.open(url, "_blank", "noopener,noreferrer");
 }
 
 function parseSource(source: string): ParseState {
@@ -397,6 +459,14 @@ function App() {
   const [generated, setGenerated] = useState("");
   const [showGenerator, setShowGenerator] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [updateCheck, setUpdateCheck] = useState<UpdateCheckState>({
+    status: "idle",
+    currentVersion: __APP_VERSION__,
+    latestVersion: null,
+    releaseUrl: RELEASES_URL,
+    checkedAt: null,
+    message: "Click Check for Updates to compare with the latest GitHub release.",
+  });
   const [stringSearch, setStringSearch] = useState("");
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -488,6 +558,16 @@ function App() {
     genLangRef.current = genLang;
   }, [genLang]);
 
+  useEffect(() => {
+    getCurrentAppVersion()
+      .then((version) => {
+        setUpdateCheck((prev) => ({ ...prev, currentVersion: version }));
+      })
+      .catch(() => {
+        setUpdateCheck((prev) => ({ ...prev, currentVersion: __APP_VERSION__ }));
+      });
+  }, []);
+
   const scheduleIdleWork = (work: () => void) => {
     const w = window as Window &
       typeof globalThis & {
@@ -523,6 +603,10 @@ function App() {
       },
       view_expand: handleExpandAll,
       view_collapse: handleCollapseAll,
+      app_check_updates: () => {
+        setShowSettings(true);
+        void handleCheckForUpdates();
+      },
       app_settings: () => setShowSettings(true),
     };
   });
@@ -822,6 +906,64 @@ function App() {
       setStatus("Downloaded data.json");
     } catch (error) {
       setStatus(`Save failed: ${formatError(error)}`);
+    }
+  };
+
+  const handleCheckForUpdates = async () => {
+    setUpdateCheck((prev) => ({
+      ...prev,
+      status: "checking",
+      message: "Checking GitHub Releases...",
+    }));
+    setStatus("Checking for updates...");
+
+    try {
+      const currentVersion = await getCurrentAppVersion();
+      const response = await fetch(LATEST_RELEASE_API_URL, {
+        headers: {
+          Accept: "application/vnd.github+json",
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`GitHub returned ${response.status}`);
+      }
+
+      const release = (await response.json()) as GitHubRelease;
+      const latestVersion = release.tag_name ?? release.name;
+
+      if (!latestVersion) {
+        throw new Error("Latest release did not include a version tag");
+      }
+
+      const releaseUrl = release.html_url ?? RELEASES_URL;
+      const updateAvailable = compareVersions(latestVersion, currentVersion) > 0;
+      const checkedAt = new Date().toLocaleString();
+      const published = release.published_at
+        ? ` Published ${new Date(release.published_at).toLocaleDateString()}.`
+        : "";
+      const message = updateAvailable
+        ? `Version ${latestVersion} is available.${published}`
+        : `You are on the latest version (${currentVersion}).${published}`;
+
+      setUpdateCheck({
+        status: updateAvailable ? "available" : "current",
+        currentVersion,
+        latestVersion,
+        releaseUrl,
+        checkedAt,
+        message,
+      });
+      setStatus(updateAvailable ? `Update available: ${latestVersion}` : "App is up to date");
+    } catch (error) {
+      const message = `Update check failed: ${formatError(error)}`;
+      setUpdateCheck((prev) => ({
+        ...prev,
+        status: "error",
+        checkedAt: new Date().toLocaleString(),
+        message,
+      }));
+      setStatus(message);
     }
   };
 
@@ -1204,6 +1346,69 @@ function App() {
                 onClick={() => setIndentSize(4)}
               >
                 4 spaces
+              </Button>
+            </div>
+          </div>
+          <div className="rounded-md border border-border bg-muted/40 p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold">Version updates</div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  Current version {updateCheck.currentVersion}
+                  {updateCheck.latestVersion
+                    ? ` · Latest ${updateCheck.latestVersion}`
+                    : ""}
+                </div>
+              </div>
+              <Badge
+                className={cn(
+                  "shrink-0 rounded-full border px-3 py-1 text-[11px]",
+                  updateCheck.status === "available" &&
+                    "border-blue-200 bg-blue-50 text-blue-700",
+                  updateCheck.status === "current" &&
+                    "border-emerald-200 bg-emerald-50 text-emerald-700",
+                  updateCheck.status === "error" &&
+                    "border-rose-200 bg-rose-50 text-rose-700",
+                  (updateCheck.status === "idle" ||
+                    updateCheck.status === "checking") &&
+                    "border-slate-200 bg-slate-50 text-slate-700",
+                )}
+              >
+                {updateCheck.status === "checking"
+                  ? "Checking"
+                  : updateCheck.status === "available"
+                    ? "Update available"
+                    : updateCheck.status === "current"
+                      ? "Up to date"
+                      : updateCheck.status === "error"
+                        ? "Failed"
+                        : "Not checked"}
+              </Badge>
+            </div>
+            <div className="mt-2 text-xs text-muted-foreground">
+              {updateCheck.message}
+            </div>
+            {updateCheck.checkedAt ? (
+              <div className="mt-1 text-[11px] text-muted-foreground">
+                Checked at {updateCheck.checkedAt}
+              </div>
+            ) : null}
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                onClick={() => void handleCheckForUpdates()}
+                disabled={updateCheck.status === "checking"}
+              >
+                <FontAwesomeIcon icon={faRotate} />
+                Check for Updates
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void openExternalUrl(updateCheck.releaseUrl)}
+              >
+                <FontAwesomeIcon icon={faArrowUpRightFromSquare} />
+                Open Download Page
               </Button>
             </div>
           </div>

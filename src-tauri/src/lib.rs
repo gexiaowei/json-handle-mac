@@ -6,6 +6,36 @@ const SEARCH_SHORTCUT: &str = "CmdOrCtrl+F";
 const FOCUS_SEARCH_SCRIPT: &str =
     "window.dispatchEvent(new CustomEvent('json-handle-focus-string-search'))";
 
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    if !(url.starts_with("https://github.com/gexiaowei/json-handle-mac/releases")
+        || url == "https://github.com/gexiaowei/json-handle-mac")
+    {
+        return Err("Blocked unsupported external URL".into());
+    }
+
+    #[cfg(target_os = "macos")]
+    let result = std::process::Command::new("open").arg(&url).status();
+
+    #[cfg(target_os = "windows")]
+    let result = std::process::Command::new("cmd")
+        .args(["/C", "start", "", &url])
+        .status();
+
+    #[cfg(target_os = "linux")]
+    let result = std::process::Command::new("xdg-open").arg(&url).status();
+
+    result
+        .map_err(|error| format!("Failed to open URL: {error}"))
+        .and_then(|status| {
+            if status.success() {
+                Ok(())
+            } else {
+                Err(format!("Open URL command exited with {status}"))
+            }
+        })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -25,6 +55,7 @@ pub fn run() {
                 })
                 .build(),
         )
+        .invoke_handler(tauri::generate_handler![open_external_url])
         .setup(|app| {
             let menu = build_menu(&app.handle())?;
             app.set_menu(menu)?;
@@ -66,8 +97,12 @@ pub fn run() {
 
 fn build_menu(app: &tauri::AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
     let app_sub = Submenu::new(app, "JSON Handle", true)?;
+    let check_updates_item =
+        MenuItem::with_id(app, "app_check_updates", "Check for Updates...", true, None::<&str>)?;
     let settings_item =
         MenuItem::with_id(app, "app_settings", "Settings...", true, Some("CmdOrCtrl+,"))?;
+    app_sub.append(&check_updates_item)?;
+    app_sub.append(&PredefinedMenuItem::separator(app)?)?;
     app_sub.append(&settings_item)?;
     app_sub.append(&PredefinedMenuItem::separator(app)?)?;
     app_sub.append(&PredefinedMenuItem::quit(app, Some("Quit JSON Handle"))?)?;
